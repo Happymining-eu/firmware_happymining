@@ -12,8 +12,15 @@ endpoint, and the agent never talks to Vast.ai's API or holds a Vast account key
   local development).
 - Encoding: JSON, UTF-8, `Content-Type: application/json`.
 - Timestamps: RFC 3339 in UTC, e.g. `2026-10-02T07:45:00Z`.
-- Request body limit: 256 KiB. Larger bodies get `413`.
-- Every response carries `X-Request-ID`.
+- Request body limit: 256 KiB. Larger bodies get `413`, and are never processed
+  in part.
+- Every response produced by the application carries `X-Request-ID`, including
+  errors.
+- Rate limits, per device: every authenticated request counts against a
+  general limit (default 240 a minute) before its body is validated;
+  heartbeats have their own (default 60 a minute); credential rotations are
+  limited per hour (default 6). An agent that follows this document stays far
+  below all three.
 
 ## Error envelope
 
@@ -37,6 +44,7 @@ never contains secrets.
 | 410 | `expired` | Operation expired. Treat as final. |
 | 413 | `payload_too_large` | Split the batch and retry. |
 | 429 | `rate_limited` | Honour `Retry-After` (seconds), then retry with jitter. |
+| 501 | `not_implemented` | Never sent to a device. Returned to the operator who requests an operation type this release does not implement. |
 | 5xx / network error / timeout | — | Retry with exponential backoff and full jitter (base 5 s, cap 15 min). |
 
 ## 1. Enrollment (pairing)
@@ -209,9 +217,9 @@ Operation object:
 | `run_preflight` | `{}` | enabled | Read-only preflight, PASS/WARN/FAIL list in `result`. |
 | `rotate_credential` | `{}` | enabled | Agent calls the rotate endpoint. |
 | `restart_vast_daemon` | `{}` | **disabled** | Via privileged helper. |
-| `reboot` | `{"delay_s": 60..3600}` | **disabled** | Via privileged helper. |
-| `run_benchmark` | `{"duration_s": 30..600}` | **disabled** | Vendor tools only. |
-| `apply_hardware_profile` | `{"profile_id": "<id>"}` | **disabled** | Vendor-supported controls only. |
+| `reboot` | `{"delay_s": 60..3600}` | **disabled** | Via privileged helper. The server only issues 60..300, so that the reboot happens while the rental check that allowed it is still fresh. |
+| `run_benchmark` | `{"duration_s": 30..600}` | **disabled** | Reserved. Not implemented in agent 0.1.0; the server refuses to queue it (`501`). |
+| `apply_hardware_profile` | `{"profile_id": "<id>"}` | **disabled** | Reserved. Not implemented in agent 0.1.0; the server refuses to queue it (`501`). |
 
 Agent rules:
 
@@ -239,7 +247,13 @@ Agent rules:
 `status` is one of `accepted` (starting), `rejected`, `succeeded`, `failed`.
 `rejected`, `succeeded` and `failed` are final. A second final acknowledgement
 returns `409 conflict`. An acknowledgement after expiry returns `410 expired`.
-`result` is at most 64 KiB and is redacted by the agent before sending.
+`result` is at most 64 KiB and is redacted by the agent before sending. The
+server enforces the size and redacts `detail` and `result` again before
+storing them; an agent must still never put a credential in either.
+
+An operation that was already handed to the device is not sent a second time
+if the rental check has since closed, and its record is not rewritten: the
+device may have started it. Its acknowledgement is still accepted.
 
 `GET /api/v1/device/operations` returns `{"operations": [...]}` (same objects).
 

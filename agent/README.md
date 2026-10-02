@@ -499,8 +499,12 @@ run and must be validated on a real machine before a pilot:
   assumptions. If the unit name differs, `restart_vast_daemon` fails with the
   error from `systemctl`, the `vastai` service state reads `not-installed`, and
   `vast.daemon_installed` may be wrong.
-- **The real HappyMining API**: all client tests run against
-  `internal/testapi`, a fake written from the same protocol document.
+- **The real HappyMining API**: the Go client tests run against
+  `internal/testapi`, a fake written from the same protocol document. The
+  built binaries are additionally run against the real API, on real
+  PostgreSQL, by `tests/api/test_end_to_end_binaries.py` (pairing, heartbeats,
+  an API outage with buffering and recovery, revocation). No test runs the
+  agent against a deployed API over the internet.
 - **Preflight values**: read through a web-fetch tool on 2026-10-02 (see the
   table above); the Vast host setup guide itself could not be read.
 - Terminal handling of `happyminingctl pair` (echo off, Ctrl-C restore) was not

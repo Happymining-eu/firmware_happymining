@@ -25,6 +25,9 @@ __pycache__/
 # Go
 agent/bin/
 
+# GitNexus code index (rebuilt locally: npx gitnexus analyze)
+.gitnexus/
+
 # Editors and OS
 .idea/
 .vscode/

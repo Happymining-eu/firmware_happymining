@@ -59,7 +59,8 @@ A renter controls a container (possibly a VM) on the machine.
 | Read or change another tenant's data, or any financial data | Device credentials are refused on every human route (tested by enumerating all routes). There is no device route that touches money. |
 | Claim a Vast machine or an owner | The device never chooses either. Binding is an admin action against the provider's own machine list; the agent's hint is labelled untrusted evidence. |
 | Replay or forge operation acknowledgements | Per-operation nonce, write-once final state, expiry, device scoping. |
-| Flood the API | Body limit 256 KiB, at most 100 samples per request, bounded field sizes, idempotent on `(device, seq)`. No per-device rate limit yet (limitation). |
+| Flood the API | Body limit 256 KiB (a body past the limit is never handed to the application as if complete), at most 100 samples per request, bounded field sizes, idempotent on `(device, seq)`. Every authenticated device request counts against a per-device limit before its body is validated; heartbeats and credential rotations have their own, lower limits. Telemetry older than the retention period is purged. |
+| Leak secrets through an acknowledgement | `detail` and `result` are redacted before storage and capped at 64 KiB. Redaction is pattern matching: a net, not a guarantee. |
 | Keep using a stolen credential | Revocation is immediate. Rotation supersedes the old credential; first use of the new one revokes it. |
 | Lift the Vast account key | It is not on the machine and is never sent to agents. |
 
@@ -85,13 +86,14 @@ The most damaging scenario: an admin session, the database, or the Vast key.
 
 | Threat | Control | Residual risk |
 |---|---|---|
-| Stolen admin password | MFA (TOTP) is mandatory for admins in LIVE; demo login is refused at start-up. Sessions are server-side, revocable, `HttpOnly`, `Secure`, `SameSite=Strict`, with CSRF tokens. | Phishing of a live TOTP code. Hardware keys or an MFA-enforcing IdP would be stronger. |
+| Stolen admin password | MFA (TOTP) is mandatory for admins in LIVE; demo login is refused at start-up. A TOTP code is accepted once. Login attempts are limited per address, per account-and-address, and per account. Sessions are server-side, `HttpOnly`, `Secure`, `SameSite=Strict`, with CSRF tokens. An admin (or the operator CLI) can deactivate an account or revoke its sessions at once; replacing a password ends its sessions. | Phishing of a live TOTP code. Hardware keys or an MFA-enforcing IdP would be stronger. |
+| Demo and real data in one database | A database records the mode that first used it; a process configured for the other mode refuses to start against it. Synthetic owners are never paid in LIVE. | An operator pointing a LIVE process at a fresh, empty database by mistake creates a second LIVE database, not a mixed one. |
 | One admin pays themselves | Preparer and approver must differ by default. Payouts are off by default. No automatic transfer exists: money moves only when a human pays the exported file at the bank. Every step is audited. | Two colluding admins. An admin with database access. |
 | Malicious remote commands to the fleet | No shell endpoint. Fixed typed operations; disruptive ones need the server flag, the gate, the agent's local allowlist and the root-owned helper switch. | An admin could still enable and misuse a restart on a machine whose local admin opted in. |
 | Database theft | Beneficiary details and TOTP secrets are encrypted with a key that is not in the database. Device, session and pairing secrets are stored as keyed hashes. | Owner names, earnings, emails and the audit trail are readable. The provider snapshots are scrubbed of personal data and keys. |
-| Tampering with the ledger or audit trail | Append-only triggers; hash-chained audit trail; `verify` recomputes both. | **A database administrator can disable triggers and rewrite the whole chain.** The audit trail is tamper-evident for the application, not tamper-proof. Ship the chain head to a separate system to close this. |
+| Tampering with the ledger or audit trail | Append-only triggers; hash-chained audit trail; `verify` recomputes both and cross-checks the reconciliation tables against the journal. The API and the worker connect as a role with no `UPDATE`/`DELETE` on the journal or the audit trail and no right to disable triggers, so a compromised application process cannot rewrite history. | **The database owner role, a superuser, or anyone with the host can disable triggers and rewrite the whole chain.** The audit trail is tamper-evident for the application, not tamper-proof. Ship the chain head to a separate system to close this. Running totals outside the journal (a bucket's reported amount, for example) are writable by the application role; `verify` detects a change, it does not prevent one. |
 | Stolen Vast API key | Stays in the backend environment. Use a scoped key (`machine_read`, `billing_read`, `user_read`). Never logged; scrubbed from stored responses. Writes are off by default. | If writes are enabled later the key must be `machine_write` and its theft could unlist or relist machines. |
-| Server compromise | Containers run as a non-root user with a read-only filesystem and no capabilities; the database is not exposed; only the proxy publishes ports. | Full host compromise yields the encryption key and the Vast key from the environment. Keep them in a secret manager when one is available. |
+| Server compromise | The API, worker and migration containers run as a non-root user with a read-only filesystem and no capabilities; the database is not exposed; only the reverse proxy publishes ports. (The PostgreSQL and proxy containers are the stock images and are not hardened beyond `no-new-privileges`.) | Full host compromise yields the encryption key and the Vast key from the environment. Keep them in a secret manager when one is available. On a shared host, every other workload with access to the Docker socket is equivalent to root: the Hostinger VPS runs such workloads (see `deploy/README.md`). |
 
 ## 5. Supply chain
 
@@ -106,7 +108,10 @@ The most damaging scenario: an admin session, the database, or the Vast key.
 
 ## Not addressed
 
-- Denial of service against the API beyond login and pairing rate limits.
+- Denial of service against the API beyond the login, pairing and per-device
+  rate limits. Unauthenticated floods are the reverse proxy's problem.
+- Secrets that do not look like secrets: redaction of logs, audit details and
+  device acknowledgements recognises known formats and key names only.
 - Physical attacks on machines.
 - Side channels between renter workloads.
 - Insider abuse at Vast.

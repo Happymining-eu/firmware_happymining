@@ -33,7 +33,7 @@ daemon, any proxying of renter traffic, any diversion of GPU time.
 | `migrations/` | Alembic migrations | The integrity rules (triggers, exclusion constraint) are hand-written there. |
 | `agent/` | Go agent, CLI, privileged helper, simulator, `.deb` packaging | Standard library only. |
 | `os/` | Install scripts, autoinstall seeds, ISO build, QEMU smoke test, release signing | Bash and Python. |
-| `deploy/` | Docker Compose and Caddy configuration | Single host, pilot scale. |
+| `deploy/` | Docker Compose: a stand-alone host with Caddy, and `deploy/hostinger/` for a host that already runs Traefik | Single host, pilot scale. |
 | `tests/` | `tests/api` (API, ledger, security, end to end), `tests/os` (installer) | Go tests live next to the Go code. |
 | `docs/` | This file, evidence, protocol, ledger, operations, threat model, limitations | |
 
@@ -49,11 +49,20 @@ No Kubernetes and no microservices: one API, one worker, one database.
 | Payouts | `mock` provider | `manual_export` only |
 
 `HM_MODE` has no default. The start-up guard (`config.py`) refuses to start
-LIVE with default secrets, the demo login, the fake provider, the mock payout
-provider, an insecure cookie, a plain-HTTP base URL, wildcard hosts or a
-development database password; and refuses to start DEMO with the real
-provider. A LIVE process that lacks its provider configuration reports an
-explicit error for each provider call. It never substitutes demo data.
+LIVE with default, placeholder or low-variety secrets, the demo login, the
+fake provider, the mock payout provider, an insecure cookie, a plain-HTTP base
+URL, wildcard hosts, a weak or development database password, or a Vast URL
+that is not Vast's console over TLS; and refuses to start DEMO with the real
+provider or with a Vast key present. A LIVE process that lacks its provider
+configuration reports an explicit error for each provider call. It never
+substitutes demo data.
+
+The guard checks the configuration. A second check covers the *database*: the
+first process to use a database records its mode in `system_info`, and the
+API, the worker and every operator command refuse to run against a database
+that belongs to the other mode (`services/system.py`). A demo and a pilot are
+therefore two deployments with two databases, never one switched back and
+forth.
 
 ## Main flows
 
@@ -75,7 +84,9 @@ rental-protection gate at request time and again at delivery
 
 **Provider sync.** The worker refreshes the provider's machine inventory and
 imports earnings for recent closed days. An admin binds a provider machine to a
-HappyMining machine; a device cannot.
+HappyMining machine; a device cannot. Bindings and ownership are kept as
+day-granular history, and changes take effect the next UTC day, so a day's
+earnings always go to whoever had the machine that day.
 
 **Money.** Earnings import → accrual; receipt recorded and allocated →
 available; settlement → reserved → in transit → paid. See `docs/ledger.md`.
@@ -92,7 +103,13 @@ available; settlement → reserved → in transit → paid. See `docs/ledger.md`
   `journal_lines`, `ledger_balances`, `earnings_imports`, `earning_buckets`,
   `earning_revisions`, `provider_receipts`, `receipt_allocations`,
   `owner_beneficiaries`, `payout_batches`, `payout_items`, `payout_evidence`.
-- Control: `exception_items`, `audit_log`, `rate_limit_counters`.
+- Control: `exception_items`, `audit_log`, `rate_limit_counters`,
+  `system_info`.
+
+Two database roles: the owner role (`happymining`) creates the schema and is
+used by the migration job only; the API and the worker connect as
+`happymining_app`, which can read and insert but cannot update or delete
+journal or audit rows, and cannot disable triggers.
 
 ## Authorization
 
