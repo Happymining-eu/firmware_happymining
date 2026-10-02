@@ -19,7 +19,7 @@ here").
 | Bank or payout-provider files | The settlement export and the confirmation import use a CSV layout of our own. No bank format is implemented. |
 | The appliance on a machine | Never. See "The appliance" below. |
 
-## The appliance (built, not committed)
+## The appliance (built, branch `appliance-wip`)
 
 `docs/appliance.md` is the contract; its section 14 lists where code and
 contract do not fully agree.

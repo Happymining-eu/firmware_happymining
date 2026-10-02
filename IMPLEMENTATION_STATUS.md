@@ -8,7 +8,7 @@ on the Hostinger VPS (commit `d0f84f9`). It has never talked to Vast, no real
 machine has run it, and the installation image has not been built. The
 **appliance** (local AI plugins, NAS indexing, encrypted backups, signed
 firmware updates, organisation roles, remote-access grants) is built on top,
-**not committed and not deployed**; its machine side was tested with fakes
+**on branch `appliance-wip`, not merged and not deployed**; its machine side was tested with fakes
 only, and the API tests that need the database **have not run against the
 final code**.
 
@@ -28,7 +28,7 @@ final code**.
 | Documentation | Done | `README.md`, `docs/`, `deploy/README.md`; `docs/appliance.md` for the appliance. |
 | Integration API (Mole Hash) | Done, tested, reviewed once | API clients with scoped tokens; fleet, telemetry, operations and earnings for other software; operations through the same gate. `docs/integration-api.md`, client in `integrations/molehash/`. **The Mole Hash side is not wired**: its source was not accessible. The appliance additions (`appliance:read`, `mode`, `remote_access_required`) are not run (database). |
 | GitNexus code index | Set up | `CLAUDE.md`, `AGENTS.md`, `.claude/skills/gitnexus-*`, `.mcp.json`. |
-| **Appliance** (uncommitted) | | Contract: `docs/appliance.md`. Limits: `docs/limitations.md`, "The appliance". |
+| **Appliance** (branch `appliance-wip`) | | Contract: `docs/appliance.md`. Limits: `docs/limitations.md`, "The appliance". |
 | - Contract | Written, revised to what was built | Decisions taken while building are marked in it; open questions in its section 14. |
 | - Control plane: appliance documents, catalog, sealing, releases, organisation roles, remote access | Written; **database tests not run against the final code** | Migration `0003_appliance`; `services/appliance.py`, `catalog.py`, `releases.py`, `org.py`, `remote_access.py`, `access.py`; `routers/appliance.py`, `releases.py`, `org.py`; device routes `/device/update` and `/device/update/artifact/{version}`; `scripts/release-sign.py`. |
 | - Dashboard: appliance page, organisation page, releases page | Written; template and route tests with fakes pass; database tests not run | Secrets sealed in the browser by `dashboard/static/seal.js`, which never ran in a browser. |
@@ -39,7 +39,7 @@ final code**.
 
 ## What was run, and the result
 
-### Appliance work (uncommitted tree), 2026-10-02
+### Appliance work (branch `appliance-wip`), 2026-10-02
 
 The PostgreSQL test database became unavailable during this work. A test
 experiment run as root with a safety check removed renamed over and deleted
@@ -137,7 +137,7 @@ verified.
 ## Artifacts (in `dist/`, not committed)
 
 The hashes below are those of the build at `c1c9c6d`. `dist/` now holds a
-rebuild from the uncommitted tree with the appliance (still named `0.1.0`);
+rebuild from the `appliance-wip` tree (still named `0.1.0`);
 its hashes are not recorded here because that tree is not final.
 
 | File | SHA-256 |
@@ -227,7 +227,7 @@ started) and the vectorizer is restarted when it changes.
   `deploy/hostinger/docker-compose.yml` is written for it: stock images, no
   published ports, Traefik labels, a staging gate, and a bootstrap step that
   fetches exactly one commit and its hash-pinned dependencies.
-- **The appliance is not deployed**: it is not committed, so no deployed
+- **The appliance is not deployed**: it is only on branch `appliance-wip`, so no deployed
   commit contains it.
 - `happymining.fr` DNS is not in the Hostinger account. `cloud.happymining.fr`
   and `api.happymining.fr` need A records at the DNS host before they can be

@@ -14,7 +14,7 @@ run (commit `c1c9c6d`) everything ran end to end with synthetic data. The
 DEMO is deployed on the Hostinger VPS at commit `d0f84f9`, behind basic
 authentication. The LIVE path exists and is guarded, and has never been run
 against Vast, a real GPU machine or a bank.
-The appliance (below) is built on top of that, not committed, not deployed,
+The appliance (below) is built on top of that, on branch `appliance-wip`, not merged, not deployed,
 and its database tests have not run against the final code. Read
 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) and
 [`docs/limitations.md`](docs/limitations.md) before relying on anything.
@@ -86,7 +86,7 @@ is not wired yet.
 
 ## The appliance: using the machine for its owner
 
-**Built, not committed, never run on a real machine.** A machine can be in
+**Built (branch `appliance-wip`), never run on a real machine.** A machine can be in
 one of three modes: `vast` (Vast hosting, the default; no plugin runs),
 `private_ai` (the owner runs local AI software from a fixed catalog: Ollama,
 Qdrant, Open WebUI, OpenClaw, Hermes Agent and HappyMining's vectorizer) or

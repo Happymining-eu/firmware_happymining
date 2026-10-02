@@ -630,7 +630,7 @@ real hardware.
 
 This code was built and tested in a sandbox without NVIDIA hardware, without a
 running systemd and without a Docker daemon. On 2026-10-02, at the
-uncommitted state with the appliance, `go test ./... -count=1` exited 0: 26
+state with the appliance (branch `appliance-wip`), `go test ./... -count=1` exited 0: 26
 packages ok, 495 top-level tests passed (784 with subtests), 1 skipped; the
 engineers also ran the suite with `-race`. The following has **not** been run and must
 be validated on a real machine before a pilot:

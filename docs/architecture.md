@@ -24,7 +24,7 @@ renter marketplace and it does not sit in the path of any workload.
 What is deliberately absent: GPU BIOS flashing, a replacement for Vast's host
 daemon, any proxying of renter traffic, any diversion of GPU time.
 
-**The appliance** (built, not committed, never run on a real machine;
+**The appliance** (built, branch `appliance-wip`, never run on a real machine;
 contract: `docs/appliance.md`). A machine can also be used by its owner:
 in mode `private_ai` or `vectorize` (never in `vast`) the root helper runs
 plugins from a catalog shipped with the package, mounts the owner's NAS

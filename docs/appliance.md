@@ -13,7 +13,7 @@ This document is the contract between the three parts that implement it:
 
 Anything not written here is not part of the contract.
 
-**Status (2026-10-02).** All three parts are built and not committed. The
+**Status (2026-10-02).** All three parts are built, on branch `appliance-wip` (not merged). The
 machine side was tested with injected fakes for every command (Docker,
 mount, dpkg, systemctl): it has never run on a real machine, under systemd,
 with Docker, a NAS or `dpkg -i`. The control-plane tests that need
