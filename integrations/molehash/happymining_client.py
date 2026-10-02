@@ -127,7 +127,8 @@ class HappyMiningClient:
         attempts = (self._retries if retry else 0) + 1
         failure = HappyMiningError(0, "unreachable", "no attempt was made")
         for attempt in range(attempts):
-            req = request.Request(url, data=data, method=method, headers=all_headers)
+            # The scheme and host were checked in __init__; the path is built here.
+            req = request.Request(url, data=data, method=method, headers=all_headers)  # noqa: S310
             delay = min(8.0, 0.5 * (2**attempt))
             try:
                 with self._opener.open(req, timeout=self._timeout) as response:
@@ -206,7 +207,9 @@ class HappyMiningClient:
     ) -> List[Dict[str, Any]]:
         """Samples, newest first. ``since`` and ``until`` are RFC 3339 timestamps."""
         page = self._call(
-            "GET", f"/machines/{_segment(machine_id)}/telemetry", query={"since": since, "until": until, "limit": limit}
+            "GET",
+            f"/machines/{_segment(machine_id)}/telemetry",
+            query={"since": since, "until": until, "limit": limit},
         )
         return page["items"]
 
@@ -233,7 +236,8 @@ class HappyMiningClient:
 
         ``reported`` is what the provider says was earned. It is not cash.
         """
-        return self._pages("/earnings/daily", {"start": start, "end": end, "machine_id": machine_id}, page_size)
+        query = {"start": start, "end": end, "machine_id": machine_id}
+        return self._pages("/earnings/daily", query, page_size)
 
     def earnings_summary(self, *, start: Optional[str] = None, end: Optional[str] = None) -> Dict[str, Any]:
         return self._call("GET", "/earnings/summary", query={"start": start, "end": end})
@@ -274,7 +278,7 @@ class HappyMiningClient:
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
