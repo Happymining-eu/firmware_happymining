@@ -1,30 +1,10 @@
-# HappyMining OS control plane on a host that already runs Traefik.
-#
-# Written for the Hostinger VPS, where Traefik owns ports 80 and 443 and other
-# projects reach it over the external Docker network "proxy". This stack
-# publishes no port of its own and has no Caddy: Traefik terminates TLS and
-# routes to the API by container label.
-#
-# The Hostinger Docker manager deploys a compose file plus an environment
-# block. It pulls images and starts containers; it never builds one, and there
-# is no checkout of this repository on the server. So this file uses stock
-# images only. A one-shot "bootstrap" container fetches the commit named by
-# HM_GIT_REF from GitHub and installs the hash-pinned dependencies into a
-# volume (deploy/hostinger/bootstrap.py); the migration job, the API and the
-# worker then run from that volume, read-only, as an unprivileged user.
-# A redeploy with a new HM_GIT_REF prepares the new version next to the old one
-# and removes the old one when the new one is complete.
-#
-# Every value comes from the project's environment (see .env.example next to
-# this file). Nothing secret is written here.
-#
-# Routing, highest priority first:
-#   1. the two sign-in endpoints of the JSON API   -> basic auth (staging gate)
-#   2. the rest of /api/v1, /healthz and /static   -> the application's own auth
-#   3. every page                                  -> basic auth (staging gate)
-# HM_GATE_MIDDLEWARES decides whether 1 and 3 are gated. The default gates
-# them, and the default basic-auth entry is an account nobody can sign in to,
-# so a deployment that forgets to configure the gate is closed, not open.
+# HappyMining OS control plane on a host that already runs Traefik (the
+# Hostinger VPS). No published ports: Traefik routes to the API by label.
+# Stock images only: the host's Docker manager pulls and runs, it never
+# builds. The "bootstrap" container fetches the commit HM_GIT_REF and its
+# hash-pinned dependencies into a volume; the rest runs from it, read-only.
+# Explained in deploy/README.md. Variables: deploy/hostinger/.env.example.
+# Keep this file under 8192 characters: the Hostinger API refuses more.
 
 name: happymining-os
 
@@ -44,13 +24,11 @@ x-app: &app
     HM_PROVIDER: ${HM_PROVIDER:?set HM_PROVIDER to fake (demo) or vast (live)}
     HM_SECRET_KEY: ${HM_SECRET_KEY:?set HM_SECRET_KEY}
     HM_FIELD_ENCRYPTION_KEY: ${HM_FIELD_ENCRYPTION_KEY:?set HM_FIELD_ENCRYPTION_KEY}
-    # Unprivileged runtime role. Only the migration job uses the owner role.
     HM_DATABASE_URL: postgresql+psycopg://happymining_app:${HM_DB_APP_PASSWORD:?set HM_DB_APP_PASSWORD}@db:5432/happymining
     HM_PUBLIC_BASE_URL: https://${HM_PUBLIC_HOST:?set HM_PUBLIC_HOST}
     HM_ALLOWED_HOSTS: ${HM_PUBLIC_HOST},${HM_API_HOST:-${HM_PUBLIC_HOST}}
     HM_COOKIE_SECURE: "true"
-    # Traefik is the only proxy in front. Add one for each further proxy
-    # (Cloudflare, a load balancer), or rate limits will see a single client.
+    # One per proxy in front of the API (Traefik = 1; add Cloudflare = 2).
     HM_TRUSTED_PROXY_HOPS: "${HM_TRUSTED_PROXY_HOPS:-1}"
     HM_DEMO_LOGIN_ENABLED: "${HM_DEMO_LOGIN_ENABLED:-false}"
     HM_PAYOUTS_ENABLED: "${HM_PAYOUTS_ENABLED:-false}"
@@ -76,9 +54,8 @@ x-app: &app
     - backend
 
 services:
-  # Prepares /opt/hm/<commit>: the source of that commit and its dependencies.
-  # Runs as root inside the container only to write into the volume, with no
-  # capabilities; everything else reads the volume as an unprivileged user.
+  # Prepares /opt/hm/<commit>. Root in the container, with no capabilities,
+  # only to write into the volume.
   bootstrap:
     image: python:3.13-slim-bookworm
     restart: "no"
@@ -94,7 +71,6 @@ services:
     environment:
       HM_GIT_REPO: ${HM_GIT_REPO:-Happymining-eu/firmware_happymining}
       HM_GIT_REF: ${HM_GIT_REF}
-    # The script comes from the same commit it is about to fetch.
     command:
       - python
       - -c
@@ -134,10 +110,10 @@ services:
     restart: "no"
     environment:
       <<: *app-env
-      # Owner role: creates the schema, then creates or updates the runtime role.
+      # Owner role: creates the schema and the runtime role.
       HM_DATABASE_URL: postgresql+psycopg://happymining:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/happymining
       HM_DB_APP_PASSWORD: ${HM_DB_APP_PASSWORD:?set HM_DB_APP_PASSWORD}
-    # Synthetic demo data is seeded in DEMO mode only (the command refuses LIVE anyway).
+    # Demo data is seeded in DEMO mode only.
     command:
       - sh
       - -c
@@ -184,7 +160,7 @@ services:
       traefik.docker.network: proxy
       traefik.http.services.hmos.loadbalancer.server.port: "8000"
 
-      # 1. Sign-in endpoints of the API: behind the staging gate.
+      # 1. Sign-in endpoints of the API: staging gate (basic auth).
       traefik.http.routers.hmos-signin.rule: (Host(`${HM_PUBLIC_HOST}`) || Host(`${HM_API_HOST:-${HM_PUBLIC_HOST}}`)) && (Path(`/api/v1/auth/demo-login`) || Path(`/api/v1/auth/login`))
       traefik.http.routers.hmos-signin.priority: "300"
       traefik.http.routers.hmos-signin.entrypoints: ${HM_TRAEFIK_ENTRYPOINT:-websecure}
@@ -193,9 +169,7 @@ services:
       traefik.http.routers.hmos-signin.middlewares: ${HM_GATE_MIDDLEWARES:-hmos-limit,hmos-headers,hmos-gate}
       traefik.http.routers.hmos-signin.service: hmos
 
-      # 2. The JSON API, liveness and static files: the application's own
-      #    authentication (session token, or a device credential from pairing).
-      #    The API cannot share the Authorization header with basic auth.
+      # 2. JSON API, liveness, static files: the application's own auth.
       traefik.http.routers.hmos-api.rule: (Host(`${HM_PUBLIC_HOST}`) || Host(`${HM_API_HOST:-${HM_PUBLIC_HOST}}`)) && (PathPrefix(`/api/v1/`) || Path(`/healthz`) || PathPrefix(`/static/`))
       traefik.http.routers.hmos-api.priority: "200"
       traefik.http.routers.hmos-api.entrypoints: ${HM_TRAEFIK_ENTRYPOINT:-websecure}
@@ -204,8 +178,7 @@ services:
       traefik.http.routers.hmos-api.middlewares: hmos-limit,hmos-headers
       traefik.http.routers.hmos-api.service: hmos
 
-      # 3. Everything else: the dashboard pages (and /metrics, which the API
-      #    itself answers only with its bearer token).
+      # 3. Everything else (the pages): staging gate.
       traefik.http.routers.hmos-pages.rule: Host(`${HM_PUBLIC_HOST}`) || Host(`${HM_API_HOST:-${HM_PUBLIC_HOST}}`)
       traefik.http.routers.hmos-pages.priority: "100"
       traefik.http.routers.hmos-pages.entrypoints: ${HM_TRAEFIK_ENTRYPOINT:-websecure}
@@ -214,11 +187,9 @@ services:
       traefik.http.routers.hmos-pages.middlewares: ${HM_GATE_MIDDLEWARES:-hmos-limit,hmos-headers,hmos-gate}
       traefik.http.routers.hmos-pages.service: hmos
 
-      # Device heartbeats are capped at 256 KiB by the API; nothing legitimate is larger than this.
       traefik.http.middlewares.hmos-limit.buffering.maxRequestBodyBytes: "1048576"
       traefik.http.middlewares.hmos-headers.headers.customResponseHeaders.X-Robots-Tag: noindex, nofollow
-      # htpasswd entries, comma-separated. The default is an account whose
-      # password nobody has: the gate stays shut until a real entry is set.
+      # Default: an account nobody can sign in to, so an unset gate is shut.
       traefik.http.middlewares.hmos-gate.basicauth.users: ${HM_BASIC_AUTH_USERS:-locked:{SHA}+t2oFd+om50/+UcIqJaJQ9V9nsQ=}
       traefik.http.middlewares.hmos-gate.basicauth.realm: HappyMining OS staging
       traefik.http.middlewares.hmos-gate.basicauth.removeheader: "true"

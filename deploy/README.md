@@ -73,6 +73,22 @@ Consequences:
   with beneficiary bank details and the Vast account key, use a host that runs
   nothing else, or accept that risk in writing.
 
+### How requests are routed
+
+Highest priority first:
+
+1. the two sign-in endpoints of the JSON API go through the staging gate
+   (basic authentication);
+2. the rest of `/api/v1`, `/healthz` and `/static` use the application's own
+   authentication (a session token, a device credential or an API client
+   token). The API cannot share the `Authorization` header with basic
+   authentication;
+3. everything else (the dashboard pages, and `/metrics`, which the API answers
+   only with its bearer token) goes through the staging gate.
+
+Requests are limited to 1 MiB by Traefik; the API caps device heartbeats at
+256 KiB itself.
+
 ### Deploy or redeploy
 
 1. Push the commit to deploy.

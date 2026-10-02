@@ -185,3 +185,11 @@ def test_lock_file_in_the_repository_matches_the_lockfile():
     assert "--hash=sha256:" in lock and "uv export --frozen" in lock
     pinned = [line for line in lock.splitlines() if line and not line.startswith((" ", "#"))]
     assert pinned and all("==" in line for line in pinned)
+
+
+def test_compose_file_fits_the_hostinger_api_limit():
+    """The Hostinger API takes the compose file as text of at most 8192 characters."""
+    text = (REPO / "deploy" / "hostinger" / "docker-compose.yml").read_text()
+    assert len(text) <= 8192, f"{len(text)} characters"
+    # What that file relies on: no build step, and the bootstrap service.
+    assert "build:" not in text and "bootstrap:" in text and "service_completed_successfully" in text
