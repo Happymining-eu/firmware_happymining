@@ -95,6 +95,7 @@ scripts/restore-verify.sh --dump /backups/<file>.dump --host HOST --user happymi
 |---|---|
 | An account is or may be compromised | Admin → Users → deactivate (or `hm deactivate-user`). Its sessions end at once. To keep the account: revoke sessions, then `hm set-password`. |
 | A machine's credential is or may be stolen | Revoke the device (Admin → machine page, or `POST /api/v1/devices/{id}/revoke`). Its queued operations are cancelled. Pair again with a new code. |
+| An API client token (Mole Hash) is or may be leaked | Dashboard → Integrations → Rotate (new token, old one dead at once) or Revoke. Revoking also cancels the operations that client had queued and no machine has received. Check the audit trail for `operation.request` rows with that client as the actor. |
 | The Vast key is or may be leaked | Revoke it at Vast, issue a new scoped key, restart the stack. The key is only in the environment. |
 | `hm verify` reports a problem | Stop payouts (`HM_PAYOUTS_ENABLED=false`, restart). Keep the database as it is. Restore the latest good dump into a scratch database and compare. |
 | A payout's outcome is unknown | Leave it `uncertain`. The money stays in transit and cannot be paid again. Settle it with bank evidence: confirm, or fail. |

@@ -8,6 +8,7 @@ load objects whose ``owner_id`` is their own; anything else is reported as
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from urllib.parse import urlsplit
@@ -18,11 +19,14 @@ from sqlalchemy.orm import Session
 from . import ratelimit
 from .config import Settings
 from .db import get_db, lock_row
-from .errors import Forbidden, NotFound
+from .errors import ClientUnauthorized, Forbidden, NotFound
 from .models import Machine, Owner
 from .security import SESSION_PREFIX, constant_time_equal
 from .services.accounts import Principal, resolve_session
+from .services.api_clients import ClientPrincipal, authenticate_client
 from .services.devices import DevicePrincipal, authenticate_device
+
+log = logging.getLogger("happymining.auth")
 
 SESSION_COOKIE = "hm_session"
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -107,6 +111,10 @@ def get_device(
 ) -> DevicePrincipal:
     principal = authenticate_device(db, settings, _bearer(request))
     request.state.device = principal
+    # The credential bookkeeping is committed here, which also hands the
+    # session's connection back: the rate limiter takes its own connection, and
+    # a request must never hold one while waiting for another.
+    db.commit()
     # Counted here, before the body is validated, so that a device sending
     # rubbish is throttled like one sending valid requests.
     ratelimit.hit(f"device:{principal.device.id}", settings.device_request_rate_limit_per_minute)
@@ -118,6 +126,47 @@ def get_heartbeat_device(
 ) -> DevicePrincipal:
     ratelimit.hit(f"heartbeat:{principal.device.id}", settings.device_heartbeat_rate_limit_per_minute)
     return principal
+
+
+# --- integration API clients -----------------------------------------------
+
+
+def get_api_client(
+    request: Request, db: Session = Depends(get_db), settings: Settings = Depends(settings_dep)
+) -> ClientPrincipal:
+    """Authenticate another system by its API client token. Bearer only: no cookie, no session."""
+    ip = client_ip(request)
+    try:
+        principal = authenticate_client(db, settings, _bearer(request), ip)
+    except ClientUnauthorized:
+        # Guessing a 256-bit secret is hopeless, but a stream of refused tokens
+        # is worth slowing down and worth a line in the log.
+        db.rollback()
+        log.warning("integration API: token refused", extra={"ip": ip})
+        ratelimit.hit(f"client-auth-fail:{ip}", settings.integration_auth_failure_limit_per_minute)
+        raise
+    request.state.api_client = principal
+    ratelimit.hit(f"client:{principal.client.id}", settings.integration_rate_limit_per_minute)
+    return principal
+
+
+def require_scope(scope: str) -> Callable[..., ClientPrincipal]:
+    def dependency(principal: ClientPrincipal = Depends(get_api_client)) -> ClientPrincipal:
+        if scope not in principal.scopes:
+            raise Forbidden(f"this API client does not have the {scope} scope")
+        return principal
+
+    return dependency
+
+
+def load_client_machine(
+    db: Session, principal: ClientPrincipal, machine_id: uuid.UUID, *, lock: bool = False
+) -> Machine:
+    """A machine the client may see. Anything outside its owner scope does not exist for it."""
+    machine = lock_row(db, Machine, machine_id) if lock else db.get(Machine, machine_id)
+    if machine is None or (principal.owner_id is not None and machine.owner_id != principal.owner_id):
+        raise NotFound()
+    return machine
 
 
 # --- tenant scoping --------------------------------------------------------

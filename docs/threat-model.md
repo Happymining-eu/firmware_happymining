@@ -21,6 +21,7 @@ One thing first, because no control changes it:
 4. Device credentials and pairing codes.
 5. Human sessions, especially admin.
 6. Release artifacts: the agent package and the installation image.
+7. API client tokens held by other systems (Mole Hash).
 
 ## Trust boundaries
 
@@ -94,6 +95,19 @@ The most damaging scenario: an admin session, the database, or the Vast key.
 | Tampering with the ledger or audit trail | Append-only triggers; hash-chained audit trail; `verify` recomputes both and cross-checks the reconciliation tables against the journal. The API and the worker connect as a role with no `UPDATE`/`DELETE` on the journal or the audit trail and no right to disable triggers, so a compromised application process cannot rewrite history. | **The database owner role, a superuser, or anyone with the host can disable triggers and rewrite the whole chain.** The audit trail is tamper-evident for the application, not tamper-proof. Ship the chain head to a separate system to close this. Running totals outside the journal (a bucket's reported amount, for example) are writable by the application role; `verify` detects a change, it does not prevent one. |
 | Stolen Vast API key | Stays in the backend environment. Use a scoped key (`machine_read`, `billing_read`, `user_read`). Never logged; scrubbed from stored responses. Writes are off by default. | If writes are enabled later the key must be `machine_write` and its theft could unlist or relist machines. |
 | Server compromise | The API, worker and migration containers run as a non-root user with a read-only filesystem and no capabilities; the database is not exposed; only the reverse proxy publishes ports. (The PostgreSQL and proxy containers are the stock images and are not hardened beyond `no-new-privileges`.) | Full host compromise yields the encryption key and the Vast key from the environment. Keep them in a secret manager when one is available. On a shared host, every other workload with access to the Docker socket is equivalent to root: the Hostinger VPS runs such workloads (see `deploy/README.md`). |
+
+### API clients (Mole Hash and other integrations)
+
+A token for the integration API is a long-lived secret held by another system.
+
+| Threat | Control | Residual risk |
+|---|---|---|
+| The token leaks (from the other system, its backups, its logs) | Scopes chosen per client; optional restriction to one owner; optional expiry; revocation and rotation take effect at once; only a keyed hash is stored here; the token is refused on every route outside the integration API; per-client rate limit; redacted from logs and audit details. | Until it is noticed, the holder has what the scopes give: with read scopes, the fleet, telemetry and earnings of every owner in scope. |
+| The other system is compromised and asks for harmful actions | Only the fixed typed operations exist. Disruptive ones need a separate scope, the server switch, the rental-protection gate and the machine's local allowlist. Every request is audited with the client as the actor and carries an idempotency key. A client can cancel only its own requests, and can hold at most 8 open operations per machine, so it cannot withdraw an admin's request or fill a machine's queue. A token is re-checked inside the transaction that queues an operation; requests of a revoked or expired client that are still pending are not delivered. | A client with `operations:write` can still queue non-disruptive operations on every machine in scope (diagnostics, inventory, credential rotation). |
+| Money moved through an integration | There is no scope and no route for it. The only write routes are "request an operation" and "cancel a pending operation" (checked by a test that enumerates them). | None through this API. |
+| A browser page uses the token | The API is server-to-server: bearer token only, no cookies. | A front end that embeds the token gives it to every user of that front end. Do not. If `HM_CORS_ALLOWED_ORIGINS` lists an origin for another reason, a page on that origin could call this API with a token it holds; leave the setting empty unless a separate front end needs it. |
+| A burst of requests stalls the API | A request never holds one database connection while waiting for another (this used to exhaust the pool; found in review, fixed, tested with more simultaneous requests than the pool has connections). Per-client rate limit; refused tokens are throttled per address. | An attacker with many addresses and no token can still load the API; that is the reverse proxy's job. |
+| One owner's history reaches another | A client limited to an owner (and an owner signed in) sees a machine's telemetry and operations only from the day the machine became theirs. | Staff and fleet-wide clients see the whole history, by design. |
 
 ## 5. Supply chain
 

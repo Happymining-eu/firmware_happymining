@@ -1,32 +1,32 @@
 ---
 name: gitnexus-area-services
-description: "Skill for the Services area of firmware_happymining. 129 symbols across 24 files."
+description: "Skill for the Services area of firmware_happymining. 144 symbols across 23 files."
 ---
 
 # Services
 
-129 symbols | 24 files | Cohesion: 68%
+144 symbols | 23 files | Cohesion: 72%
 
 ## When to Use
 
 - Working with code in `api/`
-- Understanding how audit, lock_row, utcnow work
+- Understanding how audit, lock_row, metrics work
 - Modifying services-related functionality
 
 ## Key Files
 
 | File | Symbols |
 |------|---------|
-| `api/happymining/services/payouts.py` | mark_uncertain, set_beneficiary, _evidence, _items, _lock_batch (+17) |
-| `api/happymining/security.py` | _fernet, _is_sensitive_key, _random_crockford, _subkey, decrypt_json (+16) |
-| `api/happymining/services/ledger.py` | credit, debit, q8, balance_of, get_account (+6) |
+| `api/happymining/security.py` | _fernet, _random_crockford, _subkey, constant_time_equal, decrypt_json (+20) |
+| `api/happymining/services/payouts.py` | _evidence, _items, _lock_batch, _lock_cash, _lock_item (+17) |
+| `api/happymining/services/accounts.py` | _load_user, _new_session, activate_mfa, create_user, deactivate_user (+8) |
+| `api/happymining/services/ledger.py` | balance_of, credit, debit, get_account, lock_owner (+6) |
 | `api/happymining/services/earnings.py` | _post_revision, bound_machine_on, has_open_adjustment, remap_bucket, resolve_mapping (+4) |
+| `api/happymining/services/operations.py` | _expire_if_due, acknowledge, cancel, expire_stale, pending_for_device (+4) |
 | `api/happymining/services/provider_sync.py` | _attribution_blockers, bind_machine, unbind_machine, _fail, _ok (+4) |
 | `api/happymining/services/receipts.py` | _live_receipt, _previous_request, _sync_remainder_exception, _within, allocate (+4) |
-| `api/happymining/services/devices.py` | device_state, revoke_device, rotate_credential, _hardware_summary, _jsonable (+3) |
-| `api/happymining/services/accounts.py` | _load_user, activate_mfa, deactivate_user, login, deny (+2) |
-| `api/happymining/services/operations.py` | _expire_if_due, acknowledge, cancel, expire_stale, pending_for_device (+1) |
-| `api/happymining/services/exceptions_queue.py` | _require_recovered, raise_exception, resolve, resolve_by_key |
+| `api/happymining/services/devices.py` | authenticate_device, revoke_device, rotate_credential, _hardware_summary, _jsonable (+3) |
+| `api/happymining/services/api_clients.py` | authenticate_client, is_usable, revoke_client, ensure_still_active |
 
 ## Entry Points
 
@@ -34,9 +34,9 @@ Start here when exploring this area:
 
 - **`audit`** (Function) — `api/happymining/audit.py:49`
 - **`lock_row`** (Function) — `api/happymining/db.py:74`
+- **`metrics`** (Function) — `api/happymining/main.py:308`
 - **`utcnow`** (Function) — `api/happymining/models.py:41`
-- **`decrypt_json`** (Function) — `api/happymining/security.py:128`
-- **`decrypt_text`** (Function) — `api/happymining/security.py:117`
+- **`constant_time_equal`** (Function) — `api/happymining/security.py:47`
 
 ## Key Symbols
 
@@ -44,24 +44,24 @@ Start here when exploring this area:
 |--------|------|------|------|
 | `audit` | Function | `api/happymining/audit.py` | 49 |
 | `lock_row` | Function | `api/happymining/db.py` | 74 |
+| `metrics` | Function | `api/happymining/main.py` | 308 |
 | `utcnow` | Function | `api/happymining/models.py` | 41 |
+| `constant_time_equal` | Function | `api/happymining/security.py` | 47 |
 | `decrypt_json` | Function | `api/happymining/security.py` | 128 |
 | `decrypt_text` | Function | `api/happymining/security.py` | 117 |
 | `device_secret_hash` | Function | `api/happymining/security.py` | 210 |
 | `encrypt_json` | Function | `api/happymining/security.py` | 124 |
 | `encrypt_text` | Function | `api/happymining/security.py` | 113 |
 | `format_device_token` | Function | `api/happymining/security.py` | 199 |
+| `hash_password` | Function | `api/happymining/security.py` | 54 |
 | `keyed_hash` | Function | `api/happymining/security.py` | 43 |
 | `match_totp_step` | Function | `api/happymining/security.py` | 83 |
+| `new_csrf_token` | Function | `api/happymining/security.py` | 141 |
 | `new_device_secret` | Function | `api/happymining/security.py` | 195 |
 | `new_pairing_code` | Function | `api/happymining/security.py` | 168 |
+| `new_session_token` | Function | `api/happymining/security.py` | 137 |
 | `pairing_secret_hash` | Function | `api/happymining/security.py` | 185 |
-| `parse_pairing_code` | Function | `api/happymining/security.py` | 172 |
-| `redact` | Function | `api/happymining/security.py` | 297 |
-| `redact_text` | Function | `api/happymining/security.py` | 282 |
-| `verify_password` | Function | `api/happymining/security.py` | 58 |
-| `verify_totp` | Function | `api/happymining/security.py` | 102 |
-| `activate_mfa` | Function | `api/happymining/services/accounts.py` | 151 |
+| `parse_client_token` | Function | `api/happymining/security.py` | 232 |
 
 ## Execution Flows
 

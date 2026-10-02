@@ -28,7 +28,7 @@ _AUDIT_LOCK_KEY = 0x484D4155  # "HMAU"
 
 @dataclass(frozen=True)
 class Actor:
-    type: str  # user | device | system
+    type: str  # user | device | system | client
     id: str = ""
     ip: str = ""
 

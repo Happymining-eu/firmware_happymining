@@ -88,12 +88,18 @@ HappyMining machine; a device cannot. Bindings and ownership are kept as
 day-granular history, and changes take effect the next UTC day, so a day's
 earnings always go to whoever had the machine that day.
 
+**Integration.** Another system calls `/api/v1/integration/...` with an API
+client token an admin created with chosen scopes. It reads the fleet,
+telemetry, operations and earnings, and requests typed operations, which take
+the same path as an admin's (same list, same gate, same audit trail), with an
+idempotency key so that a retry never queues a second one.
+
 **Money.** Earnings import → accrual; receipt recorded and allocated →
 available; settlement → reserved → in transit → paid. See `docs/ledger.md`.
 
 ## Data model (main tables)
 
-- People: `owners`, `users`, `user_sessions`.
+- People and callers: `owners`, `users`, `user_sessions`, `api_clients`.
 - Fleet: `machines`, `machine_ownership` (day-granular history),
   `enrollment_requests`, `devices`, `device_credentials`, `telemetry_samples`,
   `operations`.
@@ -113,17 +119,21 @@ journal or audit rows, and cannot disable triggers.
 
 ## Authorization
 
-Three human roles and one machine identity.
+Three human roles, the device identity, and API clients (other software, such
+as Mole Hash; `docs/integration-api.md`).
 
-| | admin | auditor | owner | device |
-|---|---|---|---|---|
-| Read all tenants | yes | yes | own only | no |
-| Fleet, provider, fee, receipt, payout mutations | yes | no | no | no |
-| Own telemetry and operation acknowledgements | – | – | – | yes |
-| Any financial data | yes | read | own, read | **no** |
+| | admin | auditor | owner | device | API client |
+|---|---|---|---|---|---|
+| Read all tenants | yes | yes | own only | no | fleet-wide or one owner, as created |
+| Fleet, provider, fee, receipt, payout mutations | yes | no | no | no | no |
+| Request typed operations | yes | no | no | no | with the scope, through the same gate |
+| Own telemetry and operation acknowledgements | – | – | – | yes | – |
+| Any financial data | yes | read | own, read | **no** | earnings, read only, with the scope |
 
-Enforced per route by dependencies in `deps.py`, and checked by tests that
-enumerate every route of the application.
+The three kinds of credential (session, device credential, API client token)
+open three disjoint sets of routes: none of them is accepted on another kind's
+routes. Enforced per route by dependencies in `deps.py`, and checked by tests
+that enumerate every route of the application.
 
 ## Failure behaviour
 

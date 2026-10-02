@@ -49,6 +49,16 @@ class DeviceUnauthorized(AppError):
         return "The device credential is not valid."
 
 
+class ClientUnauthorized(AppError):
+    """Integration API. Unknown, revoked, expired and malformed tokens look the same."""
+
+    status_code = 401
+    code = "client_unauthorized"
+
+    def default_message(self) -> str:
+        return "The API client token is not valid."
+
+
 class Forbidden(AppError):
     status_code = 403
     code = "forbidden"

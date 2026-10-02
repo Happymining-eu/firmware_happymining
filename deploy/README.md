@@ -106,6 +106,16 @@ nobody has. Forgetting to configure it locks the pages; it does not open them.
 For LIVE, where people sign in with a password and MFA, set
 `HM_GATE_MIDDLEWARES=hmos-limit,hmos-headers`.
 
+### Mole Hash on the same server
+
+Mole Hash (`mine_manager`, behind the same Traefik) reaches the integration
+API through the public host name, like any other caller: `/api/v1/` is routed
+without the staging gate, because it has its own authentication. Give the
+Mole Hash backend `HAPPYMINING_API_URL` and `HAPPYMINING_API_TOKEN`
+(`integrations/molehash/README.md`). Do not point it at the container over
+the Docker network: the API answers only its configured host names, and the
+token should travel over TLS.
+
 ### Not included in the Traefik variant
 
 - The on-demand backup job. Run `scripts/backup.sh` from the host against the

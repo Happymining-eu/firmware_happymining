@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     # rotations), whether or not its body turns out to be valid.
     device_request_rate_limit_per_minute: int = Field(default=240, ge=10)
     device_rotation_limit_per_hour: int = Field(default=6, ge=1)
+    # Integration API: requests per minute for one API client.
+    integration_rate_limit_per_minute: int = Field(default=600, ge=10)
+    # Refused integration tokens from one address, per minute, before it gets 429.
+    integration_auth_failure_limit_per_minute: int = Field(default=30, ge=5)
+    # Operations one API client may have queued or running on one machine.
+    integration_max_open_operations_per_machine: int = Field(default=8, ge=1, le=32)
     telemetry_retention_days: int = Field(default=30, ge=1, le=3650)
 
     # --- provider -----------------------------------------------------------

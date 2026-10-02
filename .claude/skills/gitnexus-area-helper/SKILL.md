@@ -57,14 +57,6 @@ Start here when exploring this area:
 | `Do` | Method | `agent/internal/helper/socket.go` | 83 |
 | `Invoke` | Method | `agent/internal/helper/socket.go` | 126 |
 
-## Execution Flows
-
-| Flow | Type | Steps |
-|------|------|-------|
-| `Run → Audit` | cross_community | 4 |
-| `Run → Validate` | cross_community | 3 |
-| `Run → Request` | cross_community | 3 |
-
 ## How to Explore
 
 1. `context({name: "TestClientReportsUnavailableHelper"})` — see callers and callees

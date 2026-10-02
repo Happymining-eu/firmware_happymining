@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Integrations · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Integrations</h1>
+<p class="note">Other software, such as Mole Hash, manages the AI servers through the integration API with a token created here.
+  Base address: <span class="mono">{{ api_base }}</span>. Contract: <span class="mono">docs/integration-api.md</span>.</p>
+
+{% if issued %}
+  <div class="panel">
+    <p><strong>Token for “{{ issued.client.name }}”.</strong> It is shown once and is not stored. Copy it into the other system now.</p>
+    <div class="code-once token">{{ issued.token }}</div>
+    <p class="note">Send it as <span class="mono">Authorization: Bearer &lt;token&gt;</span>. If it is lost, rotate the client to get a new one; the old one stops working at once.</p>
+  </div>
+{% endif %}
+
+{% if role == "admin" %}
+<h2>New API client</h2>
+<form class="panel" method="post" action="/admin/integrations">
+  {{ m.csrf_field(csrf) }}
+  <div class="fields">
+    <label>Name <input name="name" required maxlength="120" placeholder="Mole Hash"></label>
+    <label>Description <input name="description" maxlength="500" placeholder="fleet manager, production"></label>
+    <label>Limit to one owner
+      <select name="owner_id">
+        <option value="">whole fleet</option>
+        {% for o in owners %}<option value="{{ o.id }}">{{ o.display_name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Expires after (days) <input name="expires_in_days" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="never"></label>
+  </div>
+  <fieldset class="scopes">
+    <legend>What it may do</legend>
+    {% for scope, help in scopes.items() %}
+      <label class="check"><input type="checkbox" name="scopes" value="{{ scope }}"
+        {% if scope in ("fleet:read", "telemetry:read", "operations:read") %}checked{% endif %}>
+        <span class="mono">{{ scope }}</span> <span class="note">{{ help }}</span></label>
+    {% endfor %}
+  </fieldset>
+  <button type="submit">Create client and show its token</button>
+  <p class="note">A client can never move money, create users or pairing codes, bind provider machines or read bank details. There is no scope for those.</p>
+</form>
+{% endif %}
+
+<h2>API clients</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Name</th><th>Token</th><th>Scopes</th><th>Fleet</th><th>Status</th><th>Last used</th><th>Expires</th>{% if role == "admin" %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for c in clients %}
+      <tr>
+        <td>{{ c.name }}{% if c.description %}<div class="note">{{ c.description }}</div>{% endif %}</td>
+        <td class="mono">{{ c.token_prefix }}…</td>
+        <td>{% for s in c.scopes %}<span class="pill">{{ s }}</span> {% endfor %}</td>
+        <td>{% if c.owner_id %}{{ owner_names.get(c.owner_id, c.owner_id) }}{% else %}whole fleet{% endif %}</td>
+        <td>{{ m.status(c.status) }}</td>
+        <td>{% if c.last_used_at %}{{ c.last_used_at[:16] | replace("T", " ") }}<div class="note">{{ c.last_used_ip }}</div>{% else %}<span class="note">never</span>{% endif %}</td>
+        <td>{% if c.expires_at %}{{ c.expires_at[:10] }}{% else %}<span class="note">never</span>{% endif %}</td>
+        {% if role == "admin" %}
+        <td>
+          {% if c.status != "revoked" %}
+          <form class="inline" method="post" action="/admin/integrations/{{ c.id }}/rotate">{{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Rotate token</button></form>
+          <form class="inline" method="post" action="/admin/integrations/{{ c.id }}/revoke">
+            {{ m.csrf_field(csrf) }}
+            <input name="reason" maxlength="200" placeholder="reason" aria-label="Reason for revoking" required>
+            <button class="secondary" type="submit">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="note">No API client yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

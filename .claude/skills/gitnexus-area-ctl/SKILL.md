@@ -71,8 +71,6 @@ Start here when exploring this area:
 | `Run → Redactor` | cross_community | 4 |
 | `Run → Writer` | cross_community | 4 |
 | `Main → RandomBytes` | intra_community | 4 |
-| `Run → Redactor` | intra_community | 4 |
-| `Run → Writer` | intra_community | 4 |
 | `Main → Server` | intra_community | 3 |
 | `Main → Now` | intra_community | 3 |
 | `Main → Enrollment` | intra_community | 3 |

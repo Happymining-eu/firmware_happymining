@@ -25,6 +25,7 @@ been run against Vast, a real GPU machine or a bank. Read
 | `agent/` | Go agent, `happyminingctl`, privileged helper, simulator, `.deb` packaging |
 | `os/` | Installer scripts, Ubuntu autoinstall seeds, ISO build, QEMU smoke test, release signing |
 | `deploy/` | Docker Compose: stand-alone (Caddy) and for a host with Traefik (`deploy/hostinger/`) |
+| `integrations/` | Connectors for other software. `integrations/molehash/`: the client Mole Hash uses to manage the AI servers |
 | `tests/` | `tests/api` against real PostgreSQL, `tests/os` for the installer tooling; Go tests sit next to the Go code |
 | `docs/` | Architecture, integration evidence, agent protocol, ledger, operations, threat model, trust chain, limitations |
 
@@ -63,6 +64,18 @@ import posts nothing), records and allocates a receipt, prepares, approves,
 exports, submits and confirms a settlement, repeats each step to show nothing
 is duplicated, and verifies the ledger and the audit chain.
 
+## Managing the AI servers from Mole Hash
+
+Mole Hash already manages the ASIC miners. The integration API lets it show
+and manage the AI servers too: an admin creates an API client with chosen
+scopes (dashboard → Integrations), and Mole Hash calls
+`/api/v1/integration/...` with that token. It can read the fleet, telemetry,
+operations and earnings, and request the same typed operations an admin can,
+through the same rental-protection gate. It cannot move money. The contract is
+in [`docs/integration-api.md`](docs/integration-api.md), a Python client in
+[`integrations/molehash/`](integrations/molehash/). The Mole Hash side itself
+is not wired yet.
+
 ## Deploy
 
 `deploy/README.md`. In short: a stand-alone host uses
@@ -77,6 +90,7 @@ from this repository at a pinned commit.
 | [`docs/architecture.md`](docs/architecture.md) | Components, flows, roles, failure behaviour |
 | [`docs/integration-evidence.md`](docs/integration-evidence.md) | What is confirmed about Vast's API and terms, from primary sources, and what is not |
 | [`docs/agent-protocol.md`](docs/agent-protocol.md) | The contract between the agent and the API |
+| [`docs/integration-api.md`](docs/integration-api.md) | The API other software (Mole Hash) uses to see and manage the AI servers |
 | [`docs/ledger.md`](docs/ledger.md) | Accounts, entries, imports, reconciliation, settlement |
 | [`docs/operations.md`](docs/operations.md) | Running it: health, backups, incidents, secrets |
 | [`docs/threat-model.md`](docs/threat-model.md) | Renters, agents, owners, central compromise, supply chain |

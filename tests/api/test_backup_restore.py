@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from test_payouts import funded, prepare
 
+from happymining import migrate
 from happymining.config import get_settings
 from happymining.services import payouts
 
@@ -67,7 +68,7 @@ def test_backup_then_restore_into_scratch_database_and_verify(world, tmp_path):
         assert restore.returncode == 0, restore.stdout + restore.stderr
         assert "checksum ok" in restore.stdout and "restore verified" in restore.stdout
         assert '"ok": true' in restore.stdout  # ledger and audit chain recomputed from the restored data
-        assert "schema revision: 0001" in restore.stdout
+        assert f"schema revision: {migrate.expected_revision()}" in restore.stdout
 
         # The restored copy still enforces the ledger rules: triggers came with it.
         scratch = create_engine(url.set(database="hm_restore_check"))

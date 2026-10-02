@@ -2162,6 +2162,7 @@ def test_every_unsafe_api_route_needs_the_csrf_header_when_the_session_is_a_cook
         and method in UNSAFE
         and (method, path) not in PUBLIC_API
         and not path.startswith("/api/v1/device/")  # device credentials are bearer-only
+        and not path.startswith("/api/v1/integration")  # so are API client tokens
     ]
     assert len(unsafe) > 30 and ("POST", "/api/v1/users/{user_id}/deactivate") in unsafe
 

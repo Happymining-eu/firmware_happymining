@@ -23,6 +23,9 @@ not) and `docs/limitations.md`.
   nothing. Unlisting is not permission to end rentals.
 - A device never chooses its owner or a provider machine. The Vast account key
   never leaves the backend. No arbitrary shell endpoint.
+- Sessions, device credentials and API client tokens each open their own
+  routes and no others. The integration API never gets a route that touches
+  money; a new integration route needs a scope (`tests/api/test_integration_api.py`).
 - A provider report is not cash; a provider invoice marked "Paid" is not cash;
   a timeout is not a failed payment.
 - No secrets in the repository, in images or in logs. Signing keys are
@@ -33,7 +36,7 @@ not) and `docs/limitations.md`.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **firmware_happymining** (4943 symbols, 16051 relationships, 427 execution flows).
+This project is indexed by GitNexus as **firmware_happymining** (5260 symbols, 17065 relationships, 455 execution flows).
 
 > Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
 
@@ -72,11 +75,11 @@ This project is indexed by GitNexus as **firmware_happymining** (4943 symbols, 1
 | Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
-| Work in the Api area (408 symbols) | `.claude/skills/gitnexus-area-api/SKILL.md` |
+| Work in the Api area (470 symbols) | `.claude/skills/gitnexus-area-api/SKILL.md` |
+| Work in the Routers area (221 symbols) | `.claude/skills/gitnexus-area-routers/SKILL.md` |
 | Work in the Os area (191 symbols) | `.claude/skills/gitnexus-area-os/SKILL.md` |
-| Work in the Routers area (182 symbols) | `.claude/skills/gitnexus-area-routers/SKILL.md` |
-| Work in the Happymining area (156 symbols) | `.claude/skills/gitnexus-area-happymining/SKILL.md` |
-| Work in the Services area (129 symbols) | `.claude/skills/gitnexus-area-services/SKILL.md` |
+| Work in the Happymining area (161 symbols) | `.claude/skills/gitnexus-area-happymining/SKILL.md` |
+| Work in the Services area (144 symbols) | `.claude/skills/gitnexus-area-services/SKILL.md` |
 | Work in the Agent area (91 symbols) | `.claude/skills/gitnexus-area-agent/SKILL.md` |
 | Work in the Ctl area (85 symbols) | `.claude/skills/gitnexus-area-ctl/SKILL.md` |
 | Work in the Ops area (64 symbols) | `.claude/skills/gitnexus-area-ops/SKILL.md` |
@@ -89,8 +92,8 @@ This project is indexed by GitNexus as **firmware_happymining** (4943 symbols, 1
 | Work in the Autoinstall area (21 symbols) | `.claude/skills/gitnexus-area-autoinstall/SKILL.md` |
 | Work in the Packaging area (21 symbols) | `.claude/skills/gitnexus-area-packaging/SKILL.md` |
 | Work in the Config area (20 symbols) | `.claude/skills/gitnexus-area-config/SKILL.md` |
+| Work in the Molehash area (18 symbols) | `.claude/skills/gitnexus-area-molehash/SKILL.md` |
 | Work in the Testapi area (17 symbols) | `.claude/skills/gitnexus-area-testapi/SKILL.md` |
 | Work in the Fsx area (11 symbols) | `.claude/skills/gitnexus-area-fsx/SKILL.md` |
-| Work in the Identity area (11 symbols) | `.claude/skills/gitnexus-area-identity/SKILL.md` |
 
 <!-- gitnexus:end -->

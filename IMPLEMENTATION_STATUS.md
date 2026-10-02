@@ -21,6 +21,7 @@ been built.
 | Dashboard | Done | Server-rendered owner and admin pages. |
 | Deployment files | Written, validated offline; **not deployed** | See "Deployment" below. |
 | Documentation | Done | `README.md`, `docs/`, `deploy/README.md`. |
+| Integration API (Mole Hash) | Done, tested, reviewed once | API clients with scoped tokens; fleet, telemetry, operations and earnings for other software; operations through the same gate. `docs/integration-api.md`, client in `integrations/molehash/`. **The Mole Hash side is not wired**: its source was not accessible. |
 | GitNexus code index | Set up | `CLAUDE.md`, `AGENTS.md`, `.claude/skills/gitnexus-*`, `.mcp.json`. Full-text search index not built (see below). |
 
 ## What was run, and the result
@@ -33,10 +34,11 @@ PostgreSQL 16 from local binaries), at the state of this commit.
 | `make build-agent` | exit 0. Four binaries and `dist/happymining-agent_0.1.0_amd64.deb`. |
 | `make test` | exit 0. |
 | - `test-agent` (`go vet`, `go test ./... -race`) | 19 packages ok, 193 tests passed. |
-| - `test-api` (pytest, real PostgreSQL, fake Vast server, real agent binaries) | **545 passed**. |
+| - `test-api` (pytest, real PostgreSQL, fake Vast server, real agent binaries) | **595 passed**. |
 | - `test-os` (installer and image tooling) | **340 passed, 2 skipped** (the two need tools that are not installed). |
 | `make demo` | exit 0. The seven acceptance steps plus the idempotency checks: **41 checks passed**. |
 | `make lint` | exit 0. ruff, ruff format, gofmt, `go vet`, shellcheck, three compose files. |
+| Migration `0002` | upgrade, `alembic check` (models match), downgrade to `0001`, upgrade again: all pass. |
 | `HM_ALLOW_PARTIAL=1 make build-installer` | exit 0. Seed and install-script bundles produced. **ISO not produced** (no `xorriso`, no base ISO). |
 | `make smoke-test` | **exit 77: not run** (no QEMU, no ISO, no `ssh`). |
 | `make checksums` | exit 0. `dist/SHA256SUMS` signed with a **development key**. |
@@ -111,6 +113,14 @@ body past the size limit was processed in part; two admins could deactivate
 each other at the same moment). They are fixed and tested as well. There has
 been no review of the fixes by a second party, no review of the Go agent or
 the installer beyond their own tests, and no penetration test.
+
+The integration API had its own independent security review after it was
+written. No critical finding; one high (a burst of requests from one client
+could exhaust the database connection pool and stall the whole API for 30
+seconds, also reachable by a device), three medium (a provider-machine hint
+in telemetry; a request authenticated just before revocation still queued; the
+Python client could print the token in an error) and six low. All are fixed,
+each with a test; the burst test was checked to fail without its fix.
 
 ## Deployment
 

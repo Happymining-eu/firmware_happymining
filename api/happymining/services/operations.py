@@ -12,16 +12,18 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..audit import Actor, audit
 from ..config import Settings
 from ..db import lock_row
 from ..errors import Conflict, Forbidden, Gone, InvalidRequest, NotFound, NotImplementedFeature
-from ..models import OPERATION_FINAL, Device, Machine, Operation, utcnow
+from ..models import OPERATION_FINAL, ApiClient, Device, Machine, Operation, utcnow
 from ..providers.base import Provider
 from ..security import constant_time_equal, new_nonce, redact, redact_text
+from .api_clients import ensure_still_active, is_usable
 from .maintenance import DISRUPTIVE_TYPES, describe_blocked, evaluate
 
 DIAGNOSTIC_SECTIONS = ("services", "gpu", "disk", "network", "agent")
@@ -93,6 +95,8 @@ def request_operation(
     op_type: str,
     params: dict[str, Any],
     requested_by: uuid.UUID | None,
+    client_id: uuid.UUID | None = None,
+    request_key: str | None = None,
 ) -> Operation:
     validator = OPERATION_TYPES.get(op_type)
     if validator is None:
@@ -115,6 +119,8 @@ def request_operation(
         params=clean,
         nonce=new_nonce(),
         requested_by=requested_by,
+        requested_by_client=client_id,
+        request_key=request_key,
         issued_at=now,
         expires_at=now + timedelta(seconds=settings.operation_ttl_s),
         safety=decision.as_dict(),
@@ -140,6 +146,88 @@ def request_operation(
         },
     )
     return operation
+
+
+def request_operation_for_client(
+    db: Session,
+    settings: Settings,
+    actor: Actor,
+    provider: Provider | None,
+    *,
+    machine: Machine,
+    op_type: str,
+    params: dict[str, Any],
+    client_id: uuid.UUID,
+    request_key: str,
+) -> tuple[Operation, bool]:
+    """Request an operation on behalf of an API client. Returns (operation, created).
+
+    The client's idempotency key makes a retried request find the first
+    operation instead of queueing a second one: a fleet manager that times out
+    and tries again must not reboot a machine twice. The same key with a
+    different machine, type or parameters is refused.
+    """
+    key = (request_key or "").strip()
+    if not (8 <= len(key) <= 128):
+        raise InvalidRequest("the Idempotency-Key header must be 8 to 128 characters")
+
+    def earlier() -> Operation | None:
+        return db.execute(
+            select(Operation).where(Operation.requested_by_client == client_id, Operation.request_key == key)
+        ).scalar_one_or_none()
+
+    def same_request(found: Operation) -> Operation:
+        validator = OPERATION_TYPES.get(op_type)
+        clean = validator(params or {}) if validator else None
+        if found.machine_id != machine.id or found.type != op_type or found.params != clean:
+            raise Conflict("this idempotency key was already used for a different operation")
+        return found
+
+    found = earlier()
+    if found is not None:
+        return same_request(found), False
+    # One client cannot fill a machine's queue: operations are handed to the
+    # agent oldest first, a few at a time, and other requesters share it.
+    open_now = db.execute(
+        select(func.count())
+        .select_from(Operation)
+        .where(
+            Operation.requested_by_client == client_id,
+            Operation.machine_id == machine.id,
+            Operation.status.in_(("pending", "delivered", "accepted")),
+        )
+    ).scalar_one()
+    if open_now >= settings.integration_max_open_operations_per_machine:
+        raise Conflict(
+            f"this API client already has {open_now} operations open on this machine; "
+            "wait for them to finish or cancel them",
+            code="too_many_open_operations",
+        )
+    try:
+        with db.begin_nested():
+            operation = request_operation(
+                db,
+                settings,
+                actor,
+                provider,
+                machine=machine,
+                op_type=op_type,
+                params=params,
+                requested_by=None,
+                client_id=client_id,
+                request_key=key,
+            )
+            # The token was checked a moment ago, without a lock. Check again
+            # now that the operation exists, so that a revocation happening in
+            # between either cancels it or is seen here.
+            ensure_still_active(db, client_id)
+    except IntegrityError:
+        # The same request arrived twice at the same moment; the other one won.
+        found = earlier()
+        if found is None:
+            raise
+        return same_request(found), False
+    return operation, True
 
 
 def _expire_if_due(operation: Operation) -> None:
@@ -170,6 +258,15 @@ def pending_for_device(
         _expire_if_due(operation)
         if operation.status == "expired":
             continue
+        if operation.status == "pending" and operation.requested_by_client is not None:
+            # Requested by an API client that has since been revoked or has
+            # expired: its authority is gone, so the request does not leave.
+            client = db.get(ApiClient, operation.requested_by_client)
+            if not is_usable(client):
+                operation.status = "cancelled"
+                operation.completed_at = utcnow()
+                operation.detail = "the requesting API client is no longer valid"
+                continue
         if operation.type in DISRUPTIVE_TYPES:
             # Second check, immediately before the operation leaves the server.
             decision = evaluate(db, settings, provider, machine, operation.type)

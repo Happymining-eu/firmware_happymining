@@ -75,6 +75,16 @@ class OperationIn(Strict):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ApiClientIn(Strict):
+    name: Annotated[str, StringConstraints(min_length=1, max_length=120)]
+    description: Annotated[str, StringConstraints(max_length=500)] = ""
+    scopes: Annotated[
+        list[Annotated[str, StringConstraints(max_length=40)]], Field(min_length=1, max_length=16)
+    ]
+    owner_id: uuid.UUID | None = None
+    expires_in_days: Annotated[int, Field(ge=1, le=730)] | None = None
+
+
 class BindIn(Strict):
     machine_id: uuid.UUID
     bound_from: date

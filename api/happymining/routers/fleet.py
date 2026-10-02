@@ -250,11 +250,16 @@ def machine_telemetry(
     db: Session = Depends(get_db),
 ):
     machine = load_machine(db, principal, machine_id)
+    staff = principal.role != "owner"
     query = select(TelemetrySample).where(TelemetrySample.machine_id == machine.id)
     if since is not None:
         query = query.where(TelemetrySample.collected_at >= since)
+    if not staff:
+        period_start = machine_service.owned_since(db, machine)
+        if period_start is not None:
+            query = query.where(TelemetrySample.collected_at >= period_start)
     rows = db.execute(query.order_by(TelemetrySample.collected_at.desc()).limit(limit)).scalars().all()
-    return {"items": [views.telemetry_view(r) for r in rows], "limit": limit}
+    return {"items": [views.telemetry_view(r, staff=staff) for r in rows], "limit": limit}
 
 
 @router.post("/machines/{machine_id}/transfer-ownership")
@@ -348,6 +353,10 @@ def list_operations(
 ):
     machine = load_machine(db, principal, machine_id)
     query = select(Operation).where(Operation.machine_id == machine.id).order_by(Operation.issued_at.desc())
+    if principal.role == "owner":
+        period_start = machine_service.owned_since(db, machine)
+        if period_start is not None:
+            query = query.where(Operation.issued_at >= period_start)
     return views.page(db, query, limit, offset, views.operation_view)
 
 

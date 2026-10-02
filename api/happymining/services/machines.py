@@ -3,16 +3,31 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..audit import Actor, audit
 from ..db import lock_row
 from ..errors import Conflict, InvalidRequest, NotFound
-from ..models import Machine, MachineOwnership, Owner, ProviderMachine
+from ..models import ApiClient, Machine, MachineOwnership, Operation, Owner, ProviderMachine, utcnow
 from .provider_sync import _attribution_blockers
+
+
+def owned_since(db: Session, machine: Machine) -> datetime | None:
+    """Start of the current owner's period, as a UTC instant.
+
+    What an owner, or an API client limited to an owner, may see of a
+    machine's history starts here. Telemetry and operations from before belong
+    to the previous owner's time with the machine.
+    """
+    start = db.execute(
+        select(MachineOwnership.valid_from).where(
+            MachineOwnership.machine_id == machine.id, MachineOwnership.valid_to.is_(None)
+        )
+    ).scalar_one_or_none()
+    return datetime.combine(start, time.min, tzinfo=UTC) if start else None
 
 
 def transfer_ownership(
@@ -82,6 +97,19 @@ def transfer_ownership(
             )
         )
     machine.owner_id = new_owner_id
+    # Whatever an API client limited to the previous owner had queued and the
+    # machine has not received yet was asked for under an authority that ends here.
+    db.execute(
+        update(Operation)
+        .where(
+            Operation.machine_id == machine.id,
+            Operation.status == "pending",
+            Operation.requested_by_client.in_(
+                select(ApiClient.id).where(ApiClient.owner_id == previous_owner)
+            ),
+        )
+        .values(status="cancelled", completed_at=utcnow(), detail="the machine changed owner")
+    )
     db.flush()
     audit(
         db,

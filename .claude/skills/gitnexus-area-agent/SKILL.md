@@ -69,8 +69,6 @@ Start here when exploring this area:
 |------|------|-------|
 | `CollectDiagnostics → Path` | cross_community | 5 |
 | `CollectDiagnostics → Truncate` | cross_community | 4 |
-| `Run → Now` | cross_community | 3 |
-| `Run → Append` | cross_community | 3 |
 | `CollectDiagnostics → P` | intra_community | 3 |
 | `CollectDiagnostics → Hook` | intra_community | 3 |
 | `CollectDiagnostics → CPU` | intra_community | 3 |

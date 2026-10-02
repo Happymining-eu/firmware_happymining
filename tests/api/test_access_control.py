@@ -16,9 +16,9 @@ from test_earnings_ledger import run_import
 from test_payouts import IBAN, funded
 
 from happymining.main import create_app
-from happymining.models import AuditLog, EarningBucket, Operation, PayoutItem, User
+from happymining.models import API_CLIENT_SCOPES, AuditLog, EarningBucket, Operation, PayoutItem, User
 from happymining.security import decrypt_text
-from happymining.services import accounts, payouts, receipts
+from happymining.services import accounts, api_clients, payouts, receipts
 
 PUBLIC = {
     ("POST", "/api/v1/auth/login"),
@@ -50,6 +50,19 @@ def api_routes(app) -> list[tuple[str, str]]:
     return sorted(set(found))
 
 
+# Three kinds of caller, three kinds of credential, three disjoint sets of routes.
+DEVICE_PREFIX = "/api/v1/device/"
+INTEGRATION_PREFIX = "/api/v1/integration"
+
+
+def route_kind(path: str) -> str:
+    if path.startswith(DEVICE_PREFIX):
+        return "device"
+    if path.startswith(INTEGRATION_PREFIX):
+        return "client"
+    return "human"
+
+
 def concrete(path: str) -> str:
     return re.sub(r"\{[^}]+\}", UUID0, path)
 
@@ -72,22 +85,36 @@ def test_every_route_requires_authentication(app, client):
             continue
         r = call(client, method, path)
         assert r.status_code == 401, f"{method} {path} answered {r.status_code} without credentials"
-        assert r.json()["error"]["code"] in ("unauthorized", "device_unauthorized")
+        expected = {"human": "unauthorized", "device": "device_unauthorized", "client": "client_unauthorized"}
+        assert r.json()["error"]["code"] == expected[route_kind(path)], f"{method} {path}"
 
 
-def test_device_and_human_credentials_are_not_interchangeable(app, client, world):
+def test_credentials_of_one_kind_open_no_route_of_another_kind(app, client, world):
+    """A session, a device credential and an API client token are not interchangeable anywhere."""
     owner = world.owner()
     machine, device_token = world.paired_machine(owner)
-    admin_token = world.token(world.user("admin"))
+    issued = api_clients.create_client(
+        world.session, world.settings, SYSTEM, name="all scopes", scopes=list(API_CLIENT_SCOPES)
+    )
+    world.commit()
+    credentials = {
+        "human": world.token(world.user("admin")),
+        "device": device_token,
+        "client": issued.token,
+    }
+    checked = 0
     for method, path in api_routes(app):
         if (method, path) in PUBLIC:
             continue
-        is_device_route = path.startswith("/api/v1/device/")
-        wrong = admin_token if is_device_route else device_token
-        r = call(client, method, path, headers={"Authorization": f"Bearer {wrong}"})
-        assert r.status_code == 401, (
-            f"{method} {path} accepted the wrong kind of credential ({r.status_code})"
-        )
+        for kind, token in credentials.items():
+            if kind == route_kind(path):
+                continue
+            r = call(client, method, path, headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 401, (
+                f"{method} {path} accepted a {kind} credential ({r.status_code} {r.text[:120]})"
+            )
+            checked += 1
+    assert checked > 150
 
 
 def test_owner_role_cannot_use_any_mutating_or_staff_route(app, client, world):
@@ -113,7 +140,7 @@ def test_owner_role_cannot_use_any_mutating_or_staff_route(app, client, world):
     }
     self_service = {"/api/v1/auth/logout", "/api/v1/auth/mfa/enroll", "/api/v1/auth/mfa/activate"}
     for method, path in api_routes(app):
-        if (method, path) in PUBLIC or path.startswith("/api/v1/device/") or path in self_service:
+        if (method, path) in PUBLIC or route_kind(path) != "human" or path in self_service:
             continue
         r = call(client, method, path, headers=headers)
         if method == "GET" and path in owner_readable:
@@ -126,7 +153,7 @@ def test_auditor_is_read_only(app, client, world):
     headers = world.auth(world.user("auditor"))
     self_service = {"/api/v1/auth/logout", "/api/v1/auth/mfa/enroll", "/api/v1/auth/mfa/activate"}
     for method, path in api_routes(app):
-        if (method, path) in PUBLIC or path.startswith("/api/v1/device/") or path in self_service:
+        if (method, path) in PUBLIC or route_kind(path) != "human" or path in self_service:
             continue
         r = call(client, method, path, headers=headers)
         if method == "GET":

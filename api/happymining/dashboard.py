@@ -26,6 +26,7 @@ from .db import get_db
 from .deps import SESSION_COOKIE, _same_origin, client_ip, load_machine, settings_dep
 from .errors import AppError, Forbidden, InvalidRequest, NotFound, Unauthorized
 from .models import (
+    API_CLIENT_SCOPES,
     AuditLog,
     EarningBucket,
     EnrollmentRequest,
@@ -47,8 +48,19 @@ from .providers.registry import get_provider
 from .routers import views
 from .routers.auth import set_session_cookie
 from .security import constant_time_equal
-from .services import accounts, exceptions_queue, fees, pairing, payouts, provider_sync, receipts, statements
+from .services import (
+    accounts,
+    api_clients,
+    exceptions_queue,
+    fees,
+    pairing,
+    payouts,
+    provider_sync,
+    receipts,
+    statements,
+)
 from .services import earnings as earnings_service
+from .services import machines as machine_service
 from .services import operations as operation_service
 from .services.accounts import Principal, resolve_session
 from .services.ledger import owner_balances, to_decimal
@@ -333,26 +345,16 @@ def machine_page(
     settings: Settings = Depends(settings_dep),
 ):
     machine = load_machine(db, principal, machine_id)
-    samples = (
-        db.execute(
-            select(TelemetrySample)
-            .where(TelemetrySample.machine_id == machine.id)
-            .order_by(TelemetrySample.collected_at.desc())
-            .limit(20)
-        )
-        .scalars()
-        .all()
-    )
-    operations = (
-        db.execute(
-            select(Operation)
-            .where(Operation.machine_id == machine.id)
-            .order_by(Operation.issued_at.desc())
-            .limit(20)
-        )
-        .scalars()
-        .all()
-    )
+    sample_query = select(TelemetrySample).where(TelemetrySample.machine_id == machine.id)
+    operation_query = select(Operation).where(Operation.machine_id == machine.id)
+    if principal.role == "owner":
+        # An owner sees the machine's history from the day it became theirs.
+        period_start = machine_service.owned_since(db, machine)
+        if period_start is not None:
+            sample_query = sample_query.where(TelemetrySample.collected_at >= period_start)
+            operation_query = operation_query.where(Operation.issued_at >= period_start)
+    samples = db.execute(sample_query.order_by(TelemetrySample.collected_at.desc()).limit(20)).scalars().all()
+    operations = db.execute(operation_query.order_by(Operation.issued_at.desc()).limit(20)).scalars().all()
     return render(
         request,
         settings,
@@ -1042,3 +1044,118 @@ def audit_page(
     need(principal, "admin", "auditor")
     rows = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(200)).scalars().all()
     return render(request, settings, principal, "admin_audit.html", rows=rows)
+
+
+# --- admin: integrations (API clients such as Mole Hash) -------------------
+
+
+def _integrations_page(
+    request: Request, settings: Settings, principal: Principal, db: Session, issued: Any = None
+) -> Response:
+    owners = (
+        db.execute(select(Owner).where(Owner.status == "active").order_by(Owner.display_name)).scalars().all()
+    )
+    response = render(
+        request,
+        settings,
+        principal,
+        "admin_integrations.html",
+        clients=[api_clients.client_view(c) for c in api_clients.list_clients(db)],
+        owners=owners,
+        owner_names={str(o.id): o.display_name for o in owners},
+        scopes={scope: api_clients.SCOPE_HELP[scope] for scope in API_CLIENT_SCOPES},
+        issued=issued,
+        api_base=settings.public_base_url.rstrip("/") + "/api/v1/integration",
+    )
+    if issued is not None:
+        # The token is rendered once in this response and never stored or put in a URL.
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/admin/integrations", response_class=HTMLResponse)
+def integrations_page(
+    request: Request,
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin", "auditor")
+    return _integrations_page(request, settings, principal, db)
+
+
+@router.post("/admin/integrations", response_class=HTMLResponse)
+def integrations_create(
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    scopes: list[str] = Form(default_factory=list),
+    owner_id: str = Form(""),
+    expires_in_days: str = Form(""),
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    try:
+        days = expires_in_days.strip()
+        if days and not (days.isascii() and days.isdecimal()):
+            raise InvalidRequest("expiry must be a whole number of days")
+        issued = api_clients.create_client(
+            db,
+            settings,
+            principal.actor(client_ip(request)),
+            name=name,
+            description=description,
+            scopes=scopes,
+            owner_id=_form_uuid(owner_id, "owner") if owner_id.strip() else None,
+            expires_in_days=int(days) if days else None,
+            created_by=principal.user.id,
+        )
+        db.commit()
+    except AppError as exc:
+        db.rollback()
+        return back("/admin/integrations", err=exc.message)
+    return _integrations_page(request, settings, principal, db, issued=issued)
+
+
+@router.post("/admin/integrations/{client_id}/rotate", response_class=HTMLResponse)
+def integrations_rotate(
+    client_id: uuid.UUID,
+    request: Request,
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    try:
+        issued = api_clients.rotate_client(db, settings, principal.actor(client_ip(request)), client_id)
+        db.commit()
+    except AppError as exc:
+        db.rollback()
+        return back("/admin/integrations", err=exc.message)
+    return _integrations_page(request, settings, principal, db, issued=issued)
+
+
+@router.post("/admin/integrations/{client_id}/revoke")
+def integrations_revoke(
+    client_id: uuid.UUID,
+    request: Request,
+    reason: str = Form(""),
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    return action(
+        db,
+        "/admin/integrations",
+        lambda: api_clients.revoke_client(db, principal.actor(client_ip(request)), client_id, reason),
+        "API client revoked. Its token no longer works.",
+    )

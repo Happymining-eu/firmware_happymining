@@ -61,12 +61,6 @@ Start here when exploring this area:
 | `TestNotImplementedTypesNeverFakeSuccess` | Function | `agent/internal/ops/ops_test.go` | 278 |
 | `TestOptInOperationsRunThroughTheExecutor` | Function | `agent/internal/ops/ops_test.go` | 257 |
 
-## Execution Flows
-
-| Flow | Type | Steps |
-|------|------|-------|
-| `Run → Append` | cross_community | 3 |
-
 ## How to Explore
 
 1. `context({name: "Discard"})` — see callers and callees

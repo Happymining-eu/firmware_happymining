@@ -316,6 +316,10 @@ class Operation(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     nonce: Mapped[str] = mapped_column(String(64))
     requested_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, index=False)
+    # Set when the request came through the integration API (an API client,
+    # not a person), with the idempotency key that client supplied.
+    requested_by_client: Mapped[uuid.UUID | None] = fk("api_clients.id", nullable=True, index=False)
+    request_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     issued_at: Mapped[datetime] = ts()
     expires_at: Mapped[datetime] = ts(default=False)
     delivered_at: Mapped[datetime | None] = ts(nullable=True, default=False)
@@ -326,7 +330,60 @@ class Operation(Base):
 
     machine: Mapped[Machine] = relationship()
 
-    __table_args__ = (CheckConstraint(in_list("status", OPERATION_STATUSES), name="operation_status"),)
+    __table_args__ = (
+        CheckConstraint(in_list("status", OPERATION_STATUSES), name="operation_status"),
+        # One operation per (client, idempotency key): a retried request finds the first one.
+        Index(
+            "uq_operation_client_request",
+            "requested_by_client",
+            "request_key",
+            unique=True,
+            postgresql_where=text("request_key IS NOT NULL"),
+        ),
+    )
+
+
+# --------------------------------------------------------------------------
+# Integration API clients (other software, e.g. Mole Hash)
+# --------------------------------------------------------------------------
+
+API_CLIENT_SCOPES = (
+    "fleet:read",
+    "telemetry:read",
+    "operations:read",
+    "operations:write",
+    "operations:disruptive",
+    "earnings:read",
+)
+
+
+class ApiClient(Base):
+    """Another system allowed to call the integration API with a scoped token.
+
+    Not a person and not a device. It can never reach the routes people or
+    agents use, and those credentials can never reach its routes. Only a keyed
+    hash of its secret is stored.
+    """
+
+    __tablename__ = "api_clients"
+
+    id: Mapped[uuid.UUID] = pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[str] = mapped_column(String(500), default="")
+    scopes: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # NULL: the whole fleet. Set: only this owner's machines and earnings.
+    owner_id: Mapped[uuid.UUID | None] = fk("owners.id", nullable=True)
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    created_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, index=False)
+    created_at: Mapped[datetime] = ts()
+    expires_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    rotated_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    revoked_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    last_used_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    last_used_ip: Mapped[str] = mapped_column(String(64), default="")
+
+    __table_args__ = (CheckConstraint(in_list("status", ("active", "revoked")), name="api_client_status"),)
 
 
 # --------------------------------------------------------------------------
@@ -904,7 +961,7 @@ class AuditLog(Base):
     hash: Mapped[str] = mapped_column(String(64))
 
     __table_args__ = (
-        CheckConstraint(in_list("actor_type", ("user", "device", "system")), name="audit_actor"),
+        CheckConstraint(in_list("actor_type", ("user", "device", "system", "client")), name="audit_actor"),
     )
 
 

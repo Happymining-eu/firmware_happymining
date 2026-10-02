@@ -47,6 +47,11 @@ here").
 
 ## Not built
 
+- **The Mole Hash side of the integration.** The integration API and a Python
+  client exist and are tested. Nothing was changed in Mole Hash: its manager's
+  source was not accessible. Until someone wires the client into it, the AI
+  servers do not appear there. The API is polling only: no webhooks.
+
 - `run_benchmark` and `apply_hardware_profile` operations (benchmarks, power
   limits, fan or clock profiles). Typed in the protocol, refused by the server
   with `501`. No GPU BIOS flashing, ever.

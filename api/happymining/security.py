@@ -216,6 +216,31 @@ def session_token_hash(settings: Settings, token: str) -> str:
     return keyed_hash(settings, "session", token)
 
 
+# --- integration API clients -----------------------------------------------
+
+CLIENT_PREFIX = "hmc_"
+_CLIENT_TOKEN_RE = re.compile(r"^hmc_([0-9a-fA-F]{32})\.([A-Za-z0-9_-]{43})$")
+
+
+def new_client_secret() -> str:
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+
+def format_client_token(client_id: uuid.UUID, secret: str) -> str:
+    return f"{CLIENT_PREFIX}{client_id.hex}.{secret}"
+
+
+def parse_client_token(token: str) -> tuple[uuid.UUID, str] | None:
+    match = _CLIENT_TOKEN_RE.match(token or "")
+    if not match:
+        return None
+    return uuid.UUID(hex=match.group(1).lower()), match.group(2)
+
+
+def client_secret_hash(settings: Settings, secret: str) -> str:
+    return keyed_hash(settings, "api-client", secret)
+
+
 def new_nonce() -> str:
     return secrets.token_urlsafe(18)
 
@@ -226,7 +251,7 @@ def new_nonce() -> str:
 _CODE_CHARS = "0-9A-HJKMNP-TV-Z"
 # Replaced whole.
 _REDACT_WHOLE = (
-    re.compile(r"hmd_[0-9a-fA-F]{32}\.[A-Za-z0-9_-]{20,}"),
+    re.compile(r"hm[dc]_[0-9a-fA-F]{32}\.[A-Za-z0-9_-]{20,}"),
     re.compile(r"hms_[A-Za-z0-9_-]{20,}"),
     # Pairing codes as typed: with the HM prefix, groups joined by hyphens, spaces or nothing...
     re.compile(rf"\bHM[-\s]?[{_CODE_CHARS}]{{6}}(?:[-\s]?[{_CODE_CHARS}]{{4}}){{4}}\b", re.IGNORECASE),

@@ -150,6 +150,12 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; fon
 }
 .login { max-width: 420px; margin: 8vh auto; }
 .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.code-once.token { font-size: 15px; letter-spacing: 0; }
+.fields { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 12px; }
+fieldset.scopes { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 8px 12px; display: grid; gap: 6px; }
+fieldset.scopes legend { font-size: 13px; color: var(--muted); padding: 0 4px; }
+label.check { display: flex; gap: 8px; align-items: baseline; color: var(--ink); }
+label.check input { flex: none; }
 dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
 dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }

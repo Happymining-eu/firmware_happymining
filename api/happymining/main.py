@@ -316,13 +316,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- routers -----------------------------------------------------------
 
     from .dashboard import router as dashboard_router
-    from .routers import auth, device, fleet, money, provider
+    from .routers import auth, device, fleet, integration, money, provider
 
     app.include_router(auth.router)
     app.include_router(device.router)
     app.include_router(fleet.router)
     app.include_router(provider.router)
     app.include_router(money.router)
+    app.include_router(integration.router)
+    app.include_router(integration.admin_router)
     app.include_router(dashboard_router)
     static_dir = DASHBOARD_DIR / "static"
     if static_dir.is_dir():

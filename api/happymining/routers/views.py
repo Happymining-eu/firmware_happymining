@@ -84,7 +84,12 @@ def machine_view(settings: Settings, machine: Machine, *, staff: bool) -> dict[s
     return out
 
 
-def telemetry_view(sample: TelemetrySample) -> dict[str, Any]:
+def telemetry_view(sample: TelemetrySample, *, staff: bool = False) -> dict[str, Any]:
+    payload = sample.payload
+    if not staff and isinstance(payload, dict) and isinstance(payload.get("vast"), dict):
+        # The agent's guess at the provider machine is evidence for the admin
+        # who binds machines, and for nobody else.
+        payload = {**payload, "vast": {k: v for k, v in payload["vast"].items() if k != "machine_id_hint"}}
     return {
         "seq": sample.seq,
         "collected_at": iso(sample.collected_at),
@@ -94,7 +99,7 @@ def telemetry_view(sample: TelemetrySample) -> dict[str, Any]:
         "gpu_util_avg": float(sample.gpu_util_avg) if sample.gpu_util_avg is not None else None,
         "gpu_power_w": float(sample.gpu_power_w) if sample.gpu_power_w is not None else None,
         "gpu_temp_max": float(sample.gpu_temp_max) if sample.gpu_temp_max is not None else None,
-        "payload": sample.payload,
+        "payload": payload,
     }
 
 
@@ -113,6 +118,7 @@ def operation_view(operation: Operation) -> dict[str, Any]:
         "result": operation.result,
         "safety": operation.safety,
         "requested_by": str(operation.requested_by) if operation.requested_by else None,
+        "requested_by_client": str(operation.requested_by_client) if operation.requested_by_client else None,
     }
 
 
