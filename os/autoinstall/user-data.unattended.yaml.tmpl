@@ -1,0 +1,115 @@
+#cloud-config
+#
+# HappyMining OS — PER-MACHINE unattended seed. TEMPLATE.
+#
+# Rendered by os/autoinstall/render-seed.sh for ONE machine and ONE disk.
+# A rendered seed ERASES the disk named below. It is never part of the generic
+# distributed image; it is delivered separately on a volume labelled CIDATA
+# (os/autoinstall/make-seed-volume.sh).
+#
+# What a rendered seed contains: the operator's SSH public key, the hostname
+# and the disk identity. No password, no private key, no pairing code, no API
+# or Vast credential.
+#
+# The installer still asks "Continue with autoinstall? (yes|no)" unless the
+# operator deliberately pre-confirms on the kernel command line for that boot.
+#
+# Template markers are documented in render_template.py.
+autoinstall:
+  version: 1
+
+  # Runs first, before the installer probes any block device. Read-only checks:
+  # the by-id name must exist on this machine, be a whole disk, carry exactly
+  # the expected udev ID_SERIAL, be unique and be large enough. A failure
+  # aborts the installation before anything is written.
+  early-commands:
+    - |
+      cat > /run/happymining-disk-guard.sh <<'HM_DISK_GUARD_EOF'
+      @@BLOCK:DISK_GUARD@@
+      HM_DISK_GUARD_EOF
+#@@IF DATA_ON_ROOT_DISK
+    - ["bash", "/run/happymining-disk-guard.sh", "--firmware", "uefi", "--disk", @@DISK_BY_ID@@, @@DISK_SERIAL@@, @@DISK_MIN_BYTES@@]
+#@@ENDIF
+#@@IF DATA_DISK
+    - ["bash", "/run/happymining-disk-guard.sh", "--firmware", "uefi", "--disk", @@DISK_BY_ID@@, @@DISK_SERIAL@@, @@DISK_MIN_BYTES@@, "--disk", @@DATA_DISK_BY_ID@@, @@DATA_DISK_SERIAL@@, @@DATA_DISK_MIN_BYTES@@]
+#@@ENDIF
+
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: @@TIMEZONE@@
+
+  refresh-installer:
+    update: false
+
+  # Disk selection: Subiquity's documented match key "serial" compares with the
+  # udev property ID_SERIAL. The value is exact (render-seed.sh rejects glob
+  # characters). The by-id name is enforced by the disk guard above.
+  storage:
+    swap:
+      size: 0
+    config:
+      - {type: disk, id: disk-root, ptable: gpt, wipe: superblock-recursive, preserve: false, grub_device: false, match: {serial: @@DISK_SERIAL@@}}
+      - {type: partition, id: part-esp, device: disk-root, number: 1, size: 1G, flag: boot, grub_device: true, wipe: superblock, preserve: false}
+      - {type: format, id: fmt-esp, volume: part-esp, fstype: fat32, preserve: false}
+      - {type: partition, id: part-root, device: disk-root, number: 2, size: @@ROOT_SIZE@@, wipe: superblock, preserve: false}
+      - {type: format, id: fmt-root, volume: part-root, fstype: ext4, preserve: false}
+#@@IF DATA_ON_ROOT_DISK
+      - {type: partition, id: part-data, device: disk-root, number: 3, size: -1, wipe: superblock, preserve: false}
+#@@ENDIF
+#@@IF DATA_DISK
+      - {type: disk, id: disk-data, ptable: gpt, wipe: superblock-recursive, preserve: false, grub_device: false, match: {serial: @@DATA_DISK_SERIAL@@}}
+      - {type: partition, id: part-data, device: disk-data, number: 1, size: -1, wipe: superblock, preserve: false}
+#@@ENDIF
+      - {type: format, id: fmt-data, volume: part-data, fstype: @@DATA_FS@@, preserve: false}
+      - {type: mount, id: mnt-root, device: fmt-root, path: /}
+      - {type: mount, id: mnt-esp, device: fmt-esp, path: /boot/efi}
+      - {type: mount, id: mnt-data, device: fmt-data, path: @@DATA_MOUNT@@, options: @@DATA_MOUNT_OPTIONS@@}
+
+  # OpenSSH server, key login only.
+  ssh:
+    install-server: true
+    allow-pw: false
+
+  # No "identity" section: it would require a password hash. The account is
+  # created by cloud-init on first boot of the installed system instead, with a
+  # locked password and the operator's own public key.
+  user-data:
+    hostname: @@HOSTNAME@@
+    manage_etc_hosts: true
+    ssh_pwauth: false
+    disable_root: true
+    users:
+      - name: @@USERNAME@@
+        gecos: HappyMining operator
+        groups: [adm, sudo]
+        shell: /bin/bash
+        lock_passwd: true
+        sudo: "ALL=(ALL) NOPASSWD:ALL"
+        ssh_authorized_keys:
+          @@LIST:SSH_AUTHORIZED_KEYS@@
+
+  drivers:
+    install: false
+
+  updates: security
+
+  shutdown: reboot
+
+  late-commands:
+    - test -d /cdrom/happymining
+    - cd /cdrom/happymining && sha256sum --quiet -c SHA256SUMS
+    - mkdir -p /target/var/cache/happymining
+    - cp /cdrom/happymining/happymining-agent_*.deb /target/var/cache/happymining/
+    - cp /cdrom/happymining/SHA256SUMS /target/var/cache/happymining/SHA256SUMS
+    - if [ -f /cdrom/happymining/SHA256SUMS.gpg ]; then cp /cdrom/happymining/SHA256SUMS.gpg /target/var/cache/happymining/; fi
+    - cd /target/var/cache/happymining && for f in happymining-agent_*.deb; do sha256sum "$f" > "$f.sha256"; echo "$f" > current; done
+    - curtin in-target -- sh -c 'dpkg -i /var/cache/happymining/happymining-agent_*.deb'
+    - curtin in-target -- systemctl enable happymining-firstboot.service happymining-agent.service
+    - install -D -m 0644 /cdrom/happymining/issue /target/etc/issue.d/50-happymining-os.issue
+    - install -D -m 0644 /cdrom/happymining/maintenance/52happymining-unattended-upgrades /target/etc/apt/apt.conf.d/52happymining-unattended-upgrades
+    - install -D -m 0644 /cdrom/happymining/maintenance/needrestart-happymining.conf /target/etc/needrestart/conf.d/50-happymining.conf
+
+  error-commands:
+    - tar -czf /installer-logs.tar.gz /var/log/installer/ || true
+    - echo "HappyMining OS installation failed. Logs are in /var/log/installer and /installer-logs.tar.gz in the installer session."

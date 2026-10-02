@@ -1,0 +1,31 @@
+#!/bin/sh
+# postrm of happymining-agent. `remove` keeps the state (credential, spool,
+# identity); only `purge` deletes it. The happymining system user is left in
+# place: removing system users on purge can orphan files elsewhere.
+set -e
+
+ROOT="${DPKG_ROOT:-}"
+
+reload_systemd() {
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+    fi
+}
+
+case "$1" in
+    remove)
+        reload_systemd
+        ;;
+    purge)
+        rm -rf "$ROOT/var/lib/happymining"
+        rmdir "$ROOT/etc/happymining" 2>/dev/null || true
+        reload_systemd
+        ;;
+    upgrade | failed-upgrade | abort-install | abort-upgrade | disappear) ;;
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Fees · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Management fee versions</h1>
+<p class="lead">Versions are never edited. Each earnings day keeps the rate that applied when it was first posted.</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Scope</th><th class="num">Rate</th><th>Effective from</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for s in schedules %}
+      <tr>
+        <td>{% if s.owner_id %}{{ owner_names.get(s.owner_id, s.owner_id) }}{% else %}Default (all owners){% endif %}</td>
+        <td class="num">{{ "%.4f" | format(s.rate * 100) }}%</td>
+        <td>{{ s.effective_from }}</td>
+        <td class="wrap">{{ s.note }} {% if s.is_demo_assumption %}<span class="pill synthetic">demo assumption, not an approved rate</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="note">No fee schedule. Earnings cannot be attributed until one exists.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if role == "admin" %}
+<h2>New version</h2>
+<form class="row" method="post" action="/admin/fees">
+  {{ m.csrf_field(csrf) }}
+  <label>Scope
+    <select name="owner_id">
+      <option value="">Default (all owners)</option>
+      {% for o in owners %}<option value="{{ o.id }}">{{ o.display_name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Rate (%) <input name="rate_percent" required inputmode="decimal" pattern="\d{1,2}(\.\d{1,6})?" placeholder="10"></label>
+  <label>Effective from <input type="date" name="effective_from" value="{{ tomorrow }}" required></label>
+  <label>Note <input name="note" maxlength="500"></label>
+  <button type="submit">Create version</button>
+</form>
+<p class="note">A version cannot start on or before a day that already has posted earnings in its scope.</p>
+{% endif %}
+{% endblock %}

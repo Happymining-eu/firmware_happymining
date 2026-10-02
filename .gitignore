@@ -1,0 +1,31 @@
+# Build output and local state
+dist/
+.signing/
+*.partial
+
+# Secrets and local configuration. Only the *.example files are tracked.
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/.env.validate
+deploy/backups/
+*.pem
+*.key
+credential.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Go
+agent/bin/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

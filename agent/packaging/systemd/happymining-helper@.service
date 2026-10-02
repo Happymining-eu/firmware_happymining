@@ -1,0 +1,36 @@
+[Unit]
+Description=HappyMining privileged helper (one request)
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+CollectMode=inactive-or-failed
+
+[Service]
+# Root on purpose: this is the only HappyMining code that runs privileged.
+# It accepts exactly two requests (restart the Vast daemon, delayed reboot),
+# each refused unless enabled in the root-owned /etc/happymining/helper.conf.
+User=root
+ExecStart=/usr/lib/happymining/hm-helper serve
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=180
+# The helper only talks to systemd over local sockets; it needs no network,
+# no devices and no write access to the file system.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=64M
+TasksMax=16

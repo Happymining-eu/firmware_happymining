@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Exceptions · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Exceptions</h1>
+<p class="lead">Each open item blocks money from becoming payable until someone explains it.</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Opened</th><th>Kind</th><th>What happened</th><th>Status</th><th>Resolution</th></tr></thead>
+    <tbody>
+    {% for e in items %}
+      <tr>
+        <td>{{ e.created_at[:16] }}</td>
+        <td>{{ e.kind | replace("_", " ") }}</td>
+        <td class="wrap">{{ e.summary }}</td>
+        <td>{{ m.status(e.status) }}</td>
+        <td class="wrap">
+          {% if e.status == "open" and role == "admin" %}
+            <form class="inline" method="post" action="/admin/exceptions/{{ e.id }}/resolve">
+              {{ m.csrf_field(csrf) }}
+              <input name="resolution" required maxlength="1000" placeholder="What was checked and decided" aria-label="Resolution note">
+              <button class="secondary" type="submit">Resolve</button>
+            </form>
+          {% else %}{{ e.resolution }}{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">Nothing to review.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Earnings days not attributed to an owner</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Day</th><th>Provider machine</th><th class="num">Reported</th><th></th></tr></thead>
+    <tbody>
+    {% for b in unmapped %}
+      <tr>
+        <td>{{ b.day }}</td>
+        <td class="mono">#{{ b.external_machine_id }}</td>
+        <td class="num">{{ b.reported | money8 }}</td>
+        <td>
+          {% if role == "admin" %}
+          <form class="inline" method="post" action="/admin/buckets/{{ b.id }}/attribute">
+            {{ m.csrf_field(csrf) }}
+            <button class="secondary" type="submit">Attribute now</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="note">Every imported day is attributed.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">“Attribute now” works once the provider machine is bound and the day is on or after its binding date.</p>
+{% endblock %}

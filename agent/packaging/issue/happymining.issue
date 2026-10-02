@@ -1,0 +1,3 @@
+HappyMining agent installed. To pair this machine, log in and run:
+    sudo happyminingctl pair
+

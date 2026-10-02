@@ -1,0 +1,39 @@
+# Reverse proxy for the HappyMining OS control plane.
+#
+# HM_SITE_ADDRESS is one or more site addresses, for example:
+#   api.happymining.fr, cloud.happymining.fr     automatic HTTPS (Let's Encrypt)
+#   :80                                          plain HTTP, only behind another TLS terminator
+# The fleet platform is separate from the Shopify shop; do not point the shop's
+# own host names here.
+{
+	email {$HM_ACME_EMAIL}
+	admin off
+}
+
+{$HM_SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Device heartbeats are capped at 256 KiB by the API; nothing legitimate is larger than this.
+	request_body {
+		max_size 1MB
+	}
+
+	# Metrics are for the internal network only (docker exec / compose network).
+	@metrics path /metrics
+	respond @metrics 404
+
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-For {remote_host}
+		health_uri /healthz
+		health_interval 15s
+	}
+
+	header {
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

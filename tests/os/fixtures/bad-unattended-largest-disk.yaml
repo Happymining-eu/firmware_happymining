@@ -1,0 +1,17 @@
+#cloud-config
+# TEST FIXTURE: an "unattended" seed that lets the installer pick the largest
+# disk. validate.py must reject it.
+autoinstall:
+  version: 1
+  storage:
+    layout:
+      name: direct
+  ssh:
+    install-server: true
+    allow-pw: false
+  user-data:
+    hostname: gpu-01
+    ssh_pwauth: false
+    users:
+      - name: hmadmin
+        lock_passwd: true

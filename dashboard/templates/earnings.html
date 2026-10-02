@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Earnings · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Earnings by day</h1>
+<p class="lead">One row per machine per closed UTC day. “Reported” is what the provider says was earned. “Reconciled” is backed by money HappyMining actually received.</p>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Day</th><th>Provider machine</th><th class="num">Reported</th><th class="num">Reconciled</th>
+          <th class="num">Fee rate</th><th class="num">Fee (reconciled)</th><th class="num">Owner share (reconciled)</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+    {% for b in buckets %}
+      <tr>
+        <td>{{ b.day }}</td>
+        <td class="mono">#{{ b.external_machine_id }} {{ m.synthetic(b.synthetic) }}</td>
+        <td class="num">{{ b.reported | money8 }}</td>
+        <td class="num">{{ b.received | money8 }}</td>
+        <td class="num">{% if b.fee_rate %}{{ "%.2f" | format(b.fee_rate | float * 100) }}%{% else %}–{% endif %}</td>
+        <td class="num">{{ b.fee_reconciled | money8 }}</td>
+        <td class="num">{{ b.owner_share_reconciled | money8 }}</td>
+        <td>
+          {{ m.status(b.status) }}
+          {% if b.revisions > 1 %}<span class="pill stale">{{ b.revisions - 1 }} correction(s)</span>{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="note">No earnings imported yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

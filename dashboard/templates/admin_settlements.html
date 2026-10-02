@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Settlements · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Reconciliation and settlements</h1>
+<p class="lead">
+  Payouts are {{ "enabled" if settings.payouts_enabled else "disabled (HM_PAYOUTS_ENABLED=false)" }} ·
+  payout method: {{ settings.payout_provider | replace("_", " ") }}.
+  This software transfers no money itself.
+</p>
+
+<h2>1. Receipts from the provider</h2>
+{% if role == "admin" %}
+<form class="row" method="post" action="/admin/receipts">
+  {{ m.csrf_field(csrf) }}
+  <label>Provider account
+    <select name="provider_account_id" required>
+      {% for a in accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Bank / payout reference <input name="reference" required maxlength="120"></label>
+  <label>Received on <input type="date" name="received_on" value="{{ today }}" required></label>
+  <label>Amount (USD) <input name="amount" required inputmode="decimal" pattern="\d{1,12}(\.\d{1,8})?"></label>
+  <label>Seen on
+    <select name="evidence_source" required>
+      <option value="bank_statement">our bank statement</option>
+      <option value="payout_provider_statement">our payout-provider statement (Wise, PayPal, Stripe)</option>
+    </select>
+  </label>
+  <label>Evidence (statement date, page or transaction id) <input name="evidence_note" required maxlength="1000"></label>
+  <button type="submit">Record receipt</button>
+</form>
+{% endif %}
+<p class="note">A provider report, or a provider invoice marked “Paid”, is not a receipt. Record only money that arrived.</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Received</th><th>Reference</th><th class="num">Amount</th><th class="num">Unallocated (suspense)</th><th>Allocate to earnings days</th></tr></thead>
+    <tbody>
+    {% for r in receipts %}
+      <tr>
+        <td>{{ r.received_on }}</td>
+        <td class="mono">{{ r.reference }} {{ m.synthetic(r.synthetic) }}</td>
+        <td class="num">{{ r.amount | money8 }}</td>
+        <td class="num">{{ r.unallocated | money8 }}</td>
+        <td>
+          {% if role == "admin" and not r.voided and r.unallocated | float > 0 %}
+          <form class="inline" method="post" action="/admin/receipts/{{ r.id }}/allocate-period">
+            {{ m.csrf_field(csrf) }}
+            <input type="hidden" name="request_key" value="{{ new_key }}-{{ r.id[:8] }}">
+            <input type="date" name="start" value="{{ start }}" aria-label="First earnings day" required>
+            <input type="date" name="end" value="{{ end }}" aria-label="Last earnings day" required>
+            <button class="secondary" type="submit">Allocate</button>
+          </form>
+          {% elif r.voided %}<span class="pill bad">voided</span> <span class="note">{{ r.void_reason }}</span>
+          {% else %}<span class="note">fully allocated</span>{% endif %}
+          {% if role == "admin" and not r.voided and r.allocated | float == 0 %}
+          <form class="inline" method="post" action="/admin/receipts/{{ r.id }}/void">
+            {{ m.csrf_field(csrf) }}
+            <input name="reason" required maxlength="500" placeholder="Why it is wrong" aria-label="Reason for voiding">
+            <button class="danger" type="submit">Void</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">No receipts recorded.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>2. Owner balances and payout details</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Owner</th><th class="num">Available</th><th class="num">Reserved</th><th class="num">In transit</th><th>Payout details</th></tr></thead>
+    <tbody>
+    {% for row in owners %}
+      <tr>
+        <td><a href="/owners/{{ row.owner.id }}">{{ row.owner.display_name }}</a></td>
+        <td class="num">{{ row.balances.available_to_settle | money8 }}</td>
+        <td class="num">{{ row.balances.reserved_in_approved_payout | money }}</td>
+        <td class="num">{{ row.balances.submitted_in_transit | money }}</td>
+        <td>
+          {% if row.beneficiary %}<span class="mono">{{ row.beneficiary.masked_hint }}</span>
+          {% elif role == "admin" %}
+          <form class="inline" method="post" action="/admin/owners/{{ row.owner.id }}/beneficiary">
+            {{ m.csrf_field(csrf) }}
+            <input name="account_holder" placeholder="Account holder" aria-label="Account holder" required>
+            <input name="iban" placeholder="IBAN" aria-label="IBAN" required>
+            <button class="secondary" type="submit">Save</button>
+          </form>
+          {% else %}<span class="note">none</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>3. Settlement batches</h2>
+{% if role == "admin" %}
+<form class="inline" method="post" action="/admin/batches">
+  {{ m.csrf_field(csrf) }}
+  <input type="hidden" name="idempotency_key" value="{{ new_key }}">
+  <button type="submit">Prepare settlement from available balances</button>
+</form>
+<p class="note">Submitting this form twice (double click, back button) creates one batch: the request carries a one-time key.</p>
+{% endif %}
+
+{% for b in batches %}
+  <div class="panel">
+    <p>
+      <strong>Batch {{ b.id[:8] }}</strong> {{ m.status(b.status) }} {{ m.synthetic(b.synthetic) }}
+      · total {{ b.total | money }} {{ b.currency }} · created {{ b.created_at[:16] }}
+      {% if b.export_sha256 %}· export sha256 <span class="mono">{{ b.export_sha256[:16] }}…</span>{% endif %}
+    </p>
+    {% if role == "admin" %}
+      {% if b.status == "draft" %}
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/approve">{{ m.csrf_field(csrf) }}<button type="submit">Approve and reserve funds</button></form>
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/cancel">{{ m.csrf_field(csrf) }}<button class="danger" type="submit">Cancel</button></form>
+      {% elif b.status == "approved" %}
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/export">{{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Export CSV</button></form>
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/submit">{{ m.csrf_field(csrf) }}<button type="submit">Mark as handed to the bank</button></form>
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/cancel">{{ m.csrf_field(csrf) }}<button class="danger" type="submit">Cancel and release</button></form>
+      {% elif b.status in ("submitted", "closed") %}
+        <form class="inline" method="post" action="/admin/batches/{{ b.id }}/export">{{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Export CSV again</button></form>
+      {% endif %}
+    {% endif %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Owner</th><th class="num">Amount</th><th>Status</th><th>Confirm with evidence</th></tr></thead>
+        <tbody>
+        {% for i in b["items"] %}
+          <tr>
+            <td>{{ owner_names.get(i.owner_id, i.owner_id) }}</td>
+            <td class="num">{{ i.amount | money }}</td>
+            <td>{{ m.status(i.status) }}</td>
+            <td>
+              {% if role == "admin" and i.status in ("submitted", "uncertain") %}
+                <form class="inline" method="post" action="/admin/payout-items/{{ i.id }}/confirm">
+                  {{ m.csrf_field(csrf) }}
+                  <input name="reference" required placeholder="Bank transaction reference" aria-label="Bank reference">
+                  <button class="secondary" type="submit">Confirm paid</button>
+                </form>
+                <form class="inline" method="post" action="/admin/payout-items/{{ i.id }}/fail">
+                  {{ m.csrf_field(csrf) }}
+                  <input name="reference" required placeholder="Bank rejection reference" aria-label="Rejection reference">
+                  <button class="danger" type="submit">Mark failed</button>
+                </form>
+              {% else %}<span class="mono">{{ i.external_reference }}</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% else %}
+  <p class="note">No settlement batches yet.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,18 @@
+[Unit]
+Description=HappyMining privileged helper socket (both actions disabled by default)
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+
+[Socket]
+ListenStream=/run/happymining-helper.sock
+# Only root and members of the happymining group can connect. The helper
+# additionally checks the peer's uid (SO_PEERCRED).
+SocketUser=root
+SocketGroup=happymining
+SocketMode=0660
+# One short-lived helper process per connection.
+Accept=yes
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

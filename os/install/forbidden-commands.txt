@@ -1,0 +1,63 @@
+# Forbidden command patterns for the ordinary install / upgrade / uninstall path.
+#
+# One POSIX extended regular expression per line (GNU grep -E). Blank lines and
+# lines starting with '#' are ignored. The patterns are matched against the FULL
+# text (code and comments) of install.sh, upgrade.sh, uninstall.sh and lib.sh:
+#   - at run time by hm_self_guard (lib.sh): a script that contains a match
+#     refuses to start;
+#   - in CI by tests/os/test_forbidden_commands.py.
+# This file is data. It is the only place where these command names may appear.
+#
+# --- partitioning, formatting, wiping -------------------------------------
+\bparted\b
+\bsgdisk\b
+\bmkfs\b
+\bmkfs\.[a-z0-9]+
+\bmke2fs\b
+\bmkswap\b
+\bwipefs\b
+\bdd\b.*\bof=/dev/
+\bfdisk\b
+\bsfdisk\b
+\bcfdisk\b
+\bgdisk\b
+\bblkdiscard\b
+\bpartprobe\b
+# --- volume managers, RAID, ZFS -------------------------------------------
+\blvremove\b
+\blvcreate\b
+\bvgremove\b
+\bvgcreate\b
+\bpvcreate\b
+\bpvremove\b
+\bzpool\b
+\bzfs[[:space:]]+(create|destroy)\b
+\bmdadm\b.*--create
+\bmdadm\b.*--zero-superblock
+# --- package removal / replacement through APT or snap ---------------------
+\bapt(-get)?\b.*\b(remove|purge|autoremove)\b
+\bapt(-get)?\b.*\b(install|upgrade|dist-upgrade|full-upgrade)\b
+\bsnap\b.*\b(remove|install|refresh)\b
+\bubuntu-drivers\b.*\binstall\b
+\bdkms\b
+\bmodprobe\b
+\brmmod\b
+\bupdate-grub\b
+\bupdate-initramfs\b
+# --- mounts and fstab ------------------------------------------------------
+^[[:space:]]*(sudo[[:space:]]+)?u?mount[[:space:]]
+\bswap(on|off)\b
+>>?[[:space:]]*"?[^[:space:]]*/etc/fstab
+# --- network and firewall --------------------------------------------------
+\bnetplan[[:space:]]+(apply|try|generate|set|rebind)\b
+\bufw\b
+\bip6?tables\b
+\bnft\b
+\bnmcli\b
+# --- restart of the machine ------------------------------------------------
+^[[:space:]]*(sudo[[:space:]]+)?(reboot|poweroff|halt|kexec)\b
+\bsystemctl[[:space:]]+(reboot|poweroff|halt|kexec)\b
+\bshutdown[[:space:]]+-
+# --- other people's services -----------------------------------------------
+\bsystemctl\b.*\b(docker|containerd|vastai|nvidia-persistenced)\b
+\bdocker[[:space:]]+(rm|rmi|stop|kill|restart|system|volume|image|container|compose)\b

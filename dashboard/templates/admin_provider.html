@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Provider · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Provider integration</h1>
+
+<div class="grid">
+  <div class="tile">
+    <div class="label">Adapter</div>
+    <div class="value">{{ health.provider }}</div>
+    <div class="sub">{{ health.mode | upper }} mode{% if health.synthetic_data %} · synthetic data{% endif %}</div>
+  </div>
+  {% for a in health.accounts %}
+  <div class="tile">
+    <div class="label">{{ a.label }}</div>
+    <div class="value">
+      {% if a.last_sync_ok is none %}<span class="pill stale">never synced</span>
+      {% elif a.last_sync_ok %}<span class="pill good">all runs ok</span>
+      {% else %}<span class="pill bad">failing: {{ a.failing | join(", ") }}</span>{% endif %}
+      {% if a.stale %}<span class="pill stale">stale</span>{% endif %}
+    </div>
+    <div class="sub">{{ a.last_sync_at or "no sync yet" }}</div>
+    {% if a.last_sync_error %}<div class="sub">{{ a.last_sync_error }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<h2>Prerequisites</h2>
+<div class="panel">
+  <dl class="kv">
+    {% for key, value in health.prerequisites.items() %}
+      <dt>{{ key | replace("_", " ") }}</dt><dd>{% if value is none %}not applicable in demo{% else %}{{ value }}{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  {% for note in health.notes %}<p class="note">{{ note }}</p>{% endfor %}
+</div>
+
+{% if role == "admin" %}
+<h2>Actions</h2>
+<div class="panel">
+  <form class="inline" method="post" action="/admin/provider/check">{{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Check connection</button></form>
+  <form class="inline" method="post" action="/admin/provider/machines">{{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Sync machine list</button></form>
+  <form class="row" method="post" action="/admin/provider/earnings">
+    {{ m.csrf_field(csrf) }}
+    <label>Import earnings from <input type="date" name="start" value="{{ start }}" required></label>
+    <label>to (closed UTC days only) <input type="date" name="end" value="{{ end }}" required></label>
+    <button type="submit">Import earnings</button>
+  </form>
+  <p class="note">Importing the same days twice posts nothing new. A changed amount posts a correction for the difference.</p>
+</div>
+{% endif %}
+
+<h2>Provider machines</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Provider id</th><th>Hostname</th><th>GPUs</th><th>Rental state</th><th>Listed</th><th>Bound to</th></tr></thead>
+    <tbody>
+    {% for pm in provider_machines %}
+      <tr>
+        <td class="mono">#{{ pm.external_id }}</td>
+        <td>{{ pm.hostname }}</td>
+        <td>{{ pm.num_gpus or "?" }} × {{ pm.gpu_name or "unknown" }}</td>
+        <td>{{ m.status(pm.rental_state) }}{% if pm.missing_since %} <span class="pill bad">missing</span>{% endif %}</td>
+        <td>{% if pm.listed is none %}unknown{% else %}{{ "yes" if pm.listed else "no" }}{% endif %}</td>
+        <td>
+          {% if pm.machine_id %}
+            <a href="/machines/{{ pm.machine_id }}">{{ machine_labels.get(pm.machine_id, pm.machine_id) }}</a>
+            <span class="note">from {{ pm.bound_from }}</span>
+          {% elif role == "admin" and unbound %}
+            <form class="inline" method="post" action="/admin/provider-machines/{{ pm.id }}/bind">
+              {{ m.csrf_field(csrf) }}
+              <select name="machine_id" aria-label="Machine to bind">
+                {% for u in unbound %}<option value="{{ u.id }}">{{ u.label }}</option>{% endfor %}
+              </select>
+              <input type="date" name="bound_from" value="{{ today }}" aria-label="First day attributed" required>
+              <button class="secondary" type="submit">Bind</button>
+            </form>
+          {% else %}<span class="note">not bound</span>{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="note">No provider machines known. Sync the machine list.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">Binding is an admin decision checked against the provider's own machine list. A device cannot claim a provider machine.</p>
+{% endblock %}

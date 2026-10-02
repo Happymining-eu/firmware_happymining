@@ -1,0 +1,78 @@
+#cloud-config
+#
+# HappyMining OS — GENERIC installer seed (the one inside the distributed image).
+#
+# Safety properties, enforced by os/autoinstall/validate.py and tests/os:
+#   * storage and identity are INTERACTIVE: the Ubuntu installer itself asks
+#     which disk to use and which account to create. Nothing here selects a disk.
+#   * no password, no SSH key, no pairing code, no API or Vast credential.
+#   * the boot menu entry that loads this seed does NOT carry the kernel
+#     parameter that skips the installer's confirmation, so the installer still
+#     asks "Continue with autoinstall? (yes|no)" before it touches a disk.
+#
+# Format: cloud-config with a top-level "autoinstall" key, as required when the
+# configuration is delivered through cloud-init (NoCloud). Reference:
+# https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
+autoinstall:
+  version: 1
+
+  # Screens the installer still shows. Values given below for an interactive
+  # section are only the defaults of that screen.
+  interactive-sections:
+    - keyboard
+    - network
+    - storage
+    - identity
+    - ssh
+
+  locale: en_US.UTF-8
+  timezone: Etc/UTC
+
+  # Reproducible installer behaviour: do not replace the installer at run time.
+  refresh-installer:
+    update: false
+
+  # Default shown on the SSH screen: OpenSSH server installed, password login
+  # off. Vast's verification requirements ask for key-only SSH.
+  ssh:
+    install-server: true
+    allow-pw: false
+
+  # No third-party driver is installed by the OS installer. NVIDIA drivers are a
+  # separate, explicit operator step (os/install/nvidia-driver-plan.sh).
+  drivers:
+    install: false
+
+  # Security updates from the -security pocket are applied before first boot.
+  updates: security
+
+  shutdown: reboot
+
+  late-commands:
+    # The HappyMining payload sits on the installation medium next to the
+    # Ubuntu files. Its integrity is checked here; its AUTHENTICITY comes from
+    # verifying the ISO itself before writing it to a USB stick
+    # (docs/trust-chain.md).
+    - test -d /cdrom/happymining
+    - cd /cdrom/happymining && sha256sum --quiet -c SHA256SUMS
+    - mkdir -p /target/var/cache/happymining
+    - cp /cdrom/happymining/happymining-agent_*.deb /target/var/cache/happymining/
+    - cp /cdrom/happymining/SHA256SUMS /target/var/cache/happymining/SHA256SUMS
+    - if [ -f /cdrom/happymining/SHA256SUMS.gpg ]; then cp /cdrom/happymining/SHA256SUMS.gpg /target/var/cache/happymining/; fi
+    - cd /target/var/cache/happymining && for f in happymining-agent_*.deb; do sha256sum "$f" > "$f.sha256"; echo "$f" > current; done
+    # Add the agent package to the installed system. The package creates the
+    # unprivileged "happymining" user and never installs Docker, NVIDIA or Vast
+    # packages.
+    - curtin in-target -- sh -c 'dpkg -i /var/cache/happymining/happymining-agent_*.deb'
+    # First boot: happymining-firstboot generates this machine's own identity.
+    - curtin in-target -- systemctl enable happymining-firstboot.service happymining-agent.service
+    # Console message that explains pairing (text only).
+    - install -D -m 0644 /cdrom/happymining/issue /target/etc/issue.d/50-happymining-os.issue
+    # Scheduled security patching with kernel, NVIDIA and container-runtime
+    # packages excluded from automatic upgrades (docs/os-maintenance.md).
+    - install -D -m 0644 /cdrom/happymining/maintenance/52happymining-unattended-upgrades /target/etc/apt/apt.conf.d/52happymining-unattended-upgrades
+    - install -D -m 0644 /cdrom/happymining/maintenance/needrestart-happymining.conf /target/etc/needrestart/conf.d/50-happymining.conf
+
+  error-commands:
+    - tar -czf /installer-logs.tar.gz /var/log/installer/ || true
+    - echo "HappyMining OS installation failed. Logs are in /var/log/installer and /installer-logs.tar.gz in the installer session."

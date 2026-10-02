@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Pairing · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Pairing</h1>
+
+{% if issued %}
+  <div class="panel">
+    <p><strong>Pairing code for “{{ issued.machine.label }}”.</strong> It is shown once and is not stored.</p>
+    <div class="code-once">{{ issued.code }}</div>
+    <p class="note">Valid until {{ issued.request.expires_at.strftime("%H:%M UTC") }}, single use, locked after {{ issued.request.max_attempts }} wrong attempts.
+      On the machine, run <span class="mono">sudo happyminingctl pair</span> and type the code.</p>
+  </div>
+{% endif %}
+
+{% if role == "admin" %}
+<h2>New pairing code</h2>
+<form class="row" method="post" action="/admin/pairing">
+  {{ m.csrf_field(csrf) }}
+  <label>Owner
+    <select name="owner_id" required>
+      {% for o in owners %}<option value="{{ o.id }}">{{ o.display_name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Machine label <input name="machine_label" required maxlength="120" placeholder="rack-2-gpu-07"></label>
+  <button type="submit">Create code</button>
+</form>
+<p class="note">The owner and the machine record are fixed here. The device cannot choose either.</p>
+{% endif %}
+
+<h2>Enrollment requests</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Created</th><th>Locator</th><th>Status</th><th class="num">Wrong attempts</th><th>Expires</th></tr></thead>
+    <tbody>
+    {% for r in requests %}
+      <tr>
+        <td>{{ r.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td class="mono">{% if role == "admin" %}{{ r.locator }}{% else %}hidden{% endif %}</td>
+        <td>{{ m.status(r.status) }}</td>
+        <td class="num">{{ r.failed_attempts }} / {{ r.max_attempts }}</td>
+        <td>{{ r.expires_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">No pairing codes issued yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

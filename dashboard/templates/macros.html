@@ -1,0 +1,29 @@
+{% macro connection(m) -%}
+  {% if m.connection == "online" %}<span class="pill good">online</span>
+  {% elif m.connection == "stale" %}<span class="pill stale">stale · last seen {{ m.last_seen_age_s | age }}</span>
+  {% elif m.connection == "revoked" %}<span class="pill bad">revoked</span>
+  {% elif m.connection == "paired_never_seen" %}<span class="pill stale">paired, no data yet</span>
+  {% else %}<span class="pill">not paired</span>{% endif %}
+{%- endmacro %}
+
+{% macro rental(p) -%}
+  {% if not p %}<span class="pill">not bound</span>
+  {% elif p.missing_from_provider %}<span class="pill bad">missing at provider</span>
+  {% elif p.rental_state == "idle" %}<span class="pill good">idle</span>
+  {% elif p.rental_state == "unknown" %}<span class="pill stale">unknown</span>
+  {% else %}<span class="pill">{{ p.rental_state | replace("_", " ") }}</span>{% endif %}
+  {% if p and p.state_stale %}<span class="pill stale">stale</span>{% endif %}
+{%- endmacro %}
+
+{% macro synthetic(flag) -%}
+  {% if flag %}<span class="pill synthetic">synthetic</span>{% endif %}
+{%- endmacro %}
+
+{% macro status(value) -%}
+  {% set good = ("ok", "posted", "succeeded", "confirmed_paid", "consumed", "closed", "resolved", "mapped", "active") %}
+  {% set bad = ("error", "failed", "blocked", "locked", "revoked", "exception", "unmapped", "reversed") %}
+  {% set stale = ("uncertain", "held_unverified", "expired", "open", "pending", "draft") %}
+  <span class="pill {% if value in good %}good{% elif value in bad %}bad{% elif value in stale %}stale{% endif %}">{{ value | replace("_", " ") }}</span>
+{%- endmacro %}
+
+{% macro csrf_field(csrf) -%}<input type="hidden" name="csrf_token" value="{{ csrf }}">{%- endmacro %}

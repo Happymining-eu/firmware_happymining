@@ -1,0 +1,54 @@
+{
+  "synthetic": true,
+  "_comment": "SYNTHETIC fixture for DEMO mode. Not Vast data. Machine ids, hostnames and amounts are invented. Earnings are keyed by day offset from today (UTC): -1 is yesterday.",
+  "account_id": "SYNTHETIC-ACCOUNT-0001",
+  "currency": "USD",
+  "machines": [
+    {
+      "id": 900001,
+      "hostname": "synthetic-gpu-a",
+      "gpu_name": "RTX 4090 (synthetic)",
+      "num_gpus": 2,
+      "rental": {"state": "active_contracts", "listed": true, "active_contracts": 1, "stopped_instances": 0, "stored_data": true}
+    },
+    {
+      "id": 900002,
+      "hostname": "synthetic-gpu-b",
+      "gpu_name": "RTX 3090 (synthetic)",
+      "num_gpus": 4,
+      "rental": {"state": "idle", "listed": false, "active_contracts": 0, "stopped_instances": 0, "stored_data": false}
+    },
+    {
+      "id": 900003,
+      "hostname": "synthetic-gpu-unassigned",
+      "gpu_name": "RTX 4080 (synthetic)",
+      "num_gpus": 1,
+      "rental": {"state": "stopped_instances", "listed": false, "active_contracts": 0, "stopped_instances": 2, "stored_data": true}
+    }
+  ],
+  "earnings_by_offset": {
+    "900001": {
+      "-7": {"gpu_earn": "13.10", "sto_earn": "0.62", "bwu_earn": "0.11", "bwd_earn": "0.17"},
+      "-6": {"gpu_earn": "13.55", "sto_earn": "0.62", "bwu_earn": "0.14", "bwd_earn": "0.19"},
+      "-5": {"gpu_earn": "12.90", "sto_earn": "0.62", "bwu_earn": "0.09", "bwd_earn": "0.14"},
+      "-4": {"gpu_earn": "13.30", "sto_earn": "0.62", "bwu_earn": "0.13", "bwd_earn": "0.20"},
+      "-3": {"gpu_earn": "14.05", "sto_earn": "0.62", "bwu_earn": "0.12", "bwd_earn": "0.21"},
+      "-2": {"gpu_earn": "13.20", "sto_earn": "0.62", "bwu_earn": "0.10", "bwd_earn": "0.18"},
+      "-1": {"gpu_earn": "13.45", "sto_earn": "0.62", "bwu_earn": "0.12", "bwd_earn": "0.21"}
+    },
+    "900002": {
+      "-7": {"gpu_earn": "7.4183", "sto_earn": "0.3301", "bwu_earn": "0.0412", "bwd_earn": "0.0987"},
+      "-6": {"gpu_earn": "8.0119", "sto_earn": "0.3301", "bwu_earn": "0.0388", "bwd_earn": "0.1023"},
+      "-5": {"gpu_earn": "6.9034", "sto_earn": "0.3301", "bwu_earn": "0.0297", "bwd_earn": "0.0811"},
+      "-4": {"gpu_earn": "7.7765", "sto_earn": "0.3301", "bwu_earn": "0.0455", "bwd_earn": "0.0934"},
+      "-3": {"gpu_earn": "0", "sto_earn": "0.3301", "bwu_earn": "0", "bwd_earn": "0"},
+      "-2": {"gpu_earn": "8.2291", "sto_earn": "0.3301", "bwu_earn": "0.0501", "bwd_earn": "0.1102"},
+      "-1": {"gpu_earn": "7.9347", "sto_earn": "0.3301", "bwu_earn": "0.0423", "bwd_earn": "0.0969"}
+    },
+    "900003": {
+      "-3": {"gpu_earn": "4.10", "sto_earn": "0.20", "bwu_earn": "0.02", "bwd_earn": "0.03"},
+      "-2": {"gpu_earn": "4.35", "sto_earn": "0.20", "bwu_earn": "0.02", "bwd_earn": "0.04"},
+      "-1": {"gpu_earn": "3.95", "sto_earn": "0.20", "bwu_earn": "0.01", "bwd_earn": "0.03"}
+    }
+  }
+}

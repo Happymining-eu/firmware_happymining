@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Fleet overview · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Fleet overview</h1>
+
+<div class="grid">
+  <div class="tile">
+    <div class="label">Mode</div>
+    <div class="value">{{ health.mode | upper }}</div>
+    <div class="sub">Provider adapter: {{ health.provider }}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Machines</div>
+    <div class="value">{{ machines | length }}</div>
+    <div class="sub">{{ machines | selectattr("connection", "equalto", "online") | list | length }} online</div>
+  </div>
+  <div class="tile {% if open_exceptions %}primary{% endif %}">
+    <div class="label">Open exceptions</div>
+    <div class="value">{{ open_exceptions }}</div>
+    <div class="sub"><a href="/admin/exceptions">Review</a></div>
+  </div>
+  <div class="tile">
+    <div class="label">Switches</div>
+    <div class="sub">Payouts: {{ "on" if health.features.payouts_enabled else "off" }}</div>
+    <div class="sub">Provider writes: {{ "on" if health.features.provider_mutations_enabled else "off" }}</div>
+    <div class="sub">Disruptive operations: {{ "on" if health.features.disruptive_operations_enabled else "off" }}</div>
+  </div>
+</div>
+
+{% for note in health.notes %}<p class="note">{{ note }}</p>{% endfor %}
+
+<h2>Owners</h2>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Owner</th><th class="num">Reported, not received</th><th class="num">Available</th>
+          <th class="num">Reserved</th><th class="num">In transit</th></tr>
+    </thead>
+    <tbody>
+    {% for row in owners %}
+      <tr>
+        <td><a href="/owners/{{ row.owner.id }}">{{ row.owner.display_name }}</a> {{ m.synthetic(row.owner.is_synthetic) }}</td>
+        <td class="num">{{ row.balances.accrued_reported | money }}</td>
+        <td class="num">{{ row.balances.available_to_settle | money }}</td>
+        <td class="num">{{ row.balances.reserved_in_approved_payout | money }}</td>
+        <td class="num">{{ row.balances.submitted_in_transit | money }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">No owners yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Machines</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Machine</th><th>Owner</th><th>Agent</th><th>Provider</th><th>Rental state</th></tr></thead>
+    <tbody>
+    {% for x in machines %}
+      <tr>
+        <td><a href="/machines/{{ x.id }}">{{ x.label }}</a> {{ m.synthetic(x.synthetic) }}</td>
+        <td>{{ owner_names.get(x.owner_id, x.owner_id) }}</td>
+        <td>{{ m.connection(x) }}</td>
+        <td class="mono">{% if x.provider %}{{ x.provider.provider }} #{{ x.provider.external_id }}{% else %}–{% endif %}</td>
+        <td>{{ m.rental(x.provider) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">No machines yet. Create a pairing code to add one.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

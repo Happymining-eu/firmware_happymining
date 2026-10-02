@@ -1,0 +1,42 @@
+// HappyMining OS — scheduled security patching policy for a GPU host.
+// Installed as /etc/apt/apt.conf.d/52happymining-unattended-upgrades (after
+// Ubuntu's 50unattended-upgrades, whose settings it extends).
+//
+// What stays automatic: security updates of ordinary packages (openssl,
+// openssh, libc, ...), installed by unattended-upgrades from the -security
+// pocket on Ubuntu's normal daily schedule.
+//
+// What is EXCLUDED here and upgraded only by a person, in a maintenance window
+// approved by the HappyMining maintenance gate (docs/os-maintenance.md):
+//   * kernels            - a new kernel needs a restart, which stops every
+//                          rented instance; the NVIDIA module must match it;
+//   * NVIDIA packages    - replacing the user-space libraries under a loaded
+//                          kernel module breaks GPU access in running customer
+//                          containers until the machine is restarted;
+//   * Docker / containerd / NVIDIA container runtime - upgrading them restarts
+//                          the Docker daemon and stops every running container.
+// "Excluded" is not "abandoned": the excluded set is patched on a schedule,
+// see the monthly procedure in docs/os-maintenance.md.
+
+Unattended-Upgrade::Package-Blacklist {
+    "^linux-image-";
+    "^linux-headers-";
+    "^linux-modules-";
+    "^linux-generic";
+    "^linux-(hwe|oem|nvidia|virtual|lowlatency|signed|tools|cloud-tools)-";
+    "^nvidia-";
+    "^libnvidia-";
+    "^xserver-xorg-video-nvidia-";
+    "^docker-ce";
+    "^docker\.io$";
+    "^containerd";
+    "^runc$";
+};
+
+// Never restart the machine on its own. A restart is a maintenance action.
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+// Old kernels are the fallback when a new one does not boot. They are removed
+// by hand during maintenance, never automatically.
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";

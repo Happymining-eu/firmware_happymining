@@ -1,0 +1,54 @@
+#!/bin/sh
+# postinst of happymining-agent.
+#
+# What it does: create the unprivileged system user and group, create the
+# state directories, enable the units. What it never does: start pairing,
+# touch disks or partitions, install or remove any package, touch Docker,
+# NVIDIA drivers or Vast software. Existing state (credential, spool, journal)
+# is left exactly as it is, so upgrades keep the pairing and the buffer.
+set -e
+
+# DPKG_ROOT is empty on a normal installation.
+ROOT="${DPKG_ROOT:-}"
+STATE_DIR="$ROOT/var/lib/happymining"
+UNITS="happymining-firstboot.service happymining-helper.socket happymining-agent.service"
+
+case "$1" in
+    configure)
+        if ! getent group happymining >/dev/null 2>&1; then
+            addgroup --system happymining
+        fi
+        if ! getent passwd happymining >/dev/null 2>&1; then
+            adduser --system --ingroup happymining --no-create-home \
+                --home /nonexistent --shell /usr/sbin/nologin \
+                --gecos "HappyMining agent" happymining
+        fi
+
+        mkdir -p "$STATE_DIR" "$STATE_DIR/spool"
+        chown happymining:happymining "$STATE_DIR" "$STATE_DIR/spool"
+        chmod 0750 "$STATE_DIR" "$STATE_DIR/spool"
+
+        # Enabling must not fail the installation where systemd is absent or
+        # not running (chroot, image build, installer).
+        if command -v systemctl >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            systemctl enable $UNITS >/dev/null 2>&1 ||
+                echo "happymining-agent: units not enabled (systemd not available here)" >&2
+            if [ -d /run/systemd/system ]; then
+                systemctl daemon-reload || true
+                systemctl start happymining-firstboot.service || true
+                systemctl start happymining-helper.socket || true
+                systemctl restart happymining-agent.service || true
+            fi
+        else
+            echo "happymining-agent: systemctl not found; units were not enabled" >&2
+        fi
+        ;;
+    abort-upgrade | abort-remove | abort-deconfigure) ;;
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

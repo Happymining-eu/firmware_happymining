@@ -1,0 +1,16 @@
+# Installed by os/firstboot/sanitize-clone.sh on a disk image that is being
+# prepared for cloning. On the first boot of each clone it creates fresh SSH
+# host keys, because sanitize-clone.sh removed those of the source machine.
+# It does nothing when host keys are already present.
+[Unit]
+Description=HappyMining: create SSH host keys on the first boot of a cloned disk
+Before=ssh.service ssh.socket sshd.service
+ConditionPathExistsGlob=!/etc/ssh/ssh_host_*_key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

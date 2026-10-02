@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "retrieved_on": "2026-10-02",
+  "retrieval_note": "Values marked verified were read on the cited official page on the retrieval date through a web-fetch tool that returns extracted page text; the quoted row is recorded next to each value. Values marked unverified could not be read on an official Vast or NVIDIA page and make the corresponding check report WARN instead of PASS or FAIL. Re-check every value before a release.",
+  "no_guarantee": {
+    "value": "Meeting these minimum requirements makes your machine eligible for verification, but does not automatically guarantee verification.",
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Meeting these minimum requirements makes your machine eligible for verification, but does not automatically guarantee verification."
+  },
+  "os_releases": {
+    "value": [
+      {"id": "ubuntu", "version_id": "22.04"},
+      {"id": "ubuntu", "version_id": "24.04"}
+    ],
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Operating system | Ubuntu Server 22.04 LTS, 24.04 LTS recommended"
+  },
+  "cpu_architectures": {
+    "value": ["amd64", "arm64"],
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "CPU architecture | x86_64 or ARM64",
+    "note": "HappyMining OS and this agent package target amd64 only; arm64 is reported as WARN."
+  },
+  "cpu_flags": {
+    "value": ["avx"],
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Instruction set | AVX"
+  },
+  "physical_cores_per_gpu": {
+    "value": 2,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Physical CPU cores | 2 per GPU"
+  },
+  "ram_to_total_vram_ratio": {
+    "value": 0.95,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "System RAM | At least 95% of total GPU VRAM. Formula on the same page: system RAM >= 0.95 x VRAM per GPU x number of GPUs"
+  },
+  "min_vram_per_gpu_mib_exclusive": {
+    "value": 7168,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "VRAM per GPU | More than 7 GB",
+    "note": "The page says GB. This file uses the stricter reading, strictly more than 7 GiB = 7168 MiB as reported by nvidia-smi."
+  },
+  "identical_gpu_models": {
+    "value": true,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "GPU models | All identical, do not mix models in one machine"
+  },
+  "nvidia_driver_min": {
+    "value": "520.61.05",
+    "source": "https://docs.nvidia.com/cuda/archive/12.8.0/cuda-toolkit-release-notes/index.html",
+    "additional_sources": ["https://docs.vast.ai/host/verification-stages"],
+    "verified": true,
+    "quote": "Vast: 'CUDA version | 11.8 or newer'. NVIDIA, Table 3 CUDA Toolkit and Corresponding Driver Versions: 'CUDA 11.8 GA | Linux x86_64 Driver Version >=520.61.05'.",
+    "note": "Derived lower bound: the oldest Linux driver NVIDIA lists for CUDA 11.8. Vast additionally requires 'NVIDIA driver | A currently supported release for your GPU', which cannot be decided offline and is not checked."
+  },
+  "nvidia_driver_max_exclusive": {
+    "value": "",
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": false,
+    "note": "No upper bound was found in Vast documentation. Empty means no upper bound is enforced."
+  },
+  "secure_boot_disabled": {
+    "value": true,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Secure Boot | Disabled"
+  },
+  "docker_storage_min_gb": {
+    "value": 200,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Dedicated drive for Docker container storage | 200 GB"
+  },
+  "docker_storage_dedicated": {
+    "value": true,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Dedicated drive for Docker container storage | 200 GB",
+    "note": "Preflight can only tell whether the Docker data directory is on the root filesystem (certainly not dedicated) or on a separate mount (possibly dedicated)."
+  },
+  "root_free_min_gb": {
+    "value": 20,
+    "source": "https://docs.vast.ai/host/verification-stages",
+    "verified": true,
+    "quote": "Root partition free space | 20 GB"
+  },
+  "docker_storage_filesystems": {
+    "value": ["xfs"],
+    "source": "https://cloud.vast.ai/host/setup/",
+    "verified": false,
+    "note": "The host setup guide is rendered client-side and could not be read. XFS is a conservative assumption, not a documented requirement that was verified."
+  },
+  "docker_packages_expected": {
+    "value": ["docker-ce"],
+    "source": "https://cloud.vast.ai/host/setup/",
+    "verified": false,
+    "note": "Which Docker distribution the Vast installer expects or installs could not be read on an official page."
+  },
+  "vast_detection_paths": {
+    "value": [
+      "/etc/systemd/system/vastai.service",
+      "/lib/systemd/system/vastai.service",
+      "/usr/lib/systemd/system/vastai.service",
+      "/var/lib/vastai_kaalia"
+    ],
+    "source": "https://docs.vast.ai/host/hosting-overview",
+    "verified": false,
+    "note": "The names of the unit and directory installed by the official Vast host software are not stated on the pages that could be read."
+  },
+  "outbound_https_probes": [
+    "https://changelogs.ubuntu.com/meta-release-lts"
+  ],
+  "not_checked": [
+    {"requirement": "PCIe bandwidth | More than 2.85 GiB/s per GPU", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "GPU | NVIDIA, Maxwell or newer (the GPU generation is not derived from the model name)", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Download speed | 500 Mbps; Upload speed | 500 Mbps", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Connection type | Wired Ethernet, fiber recommended", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Public IP | Public IPv4 address", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Forwarded ports | 5 ports per GPU, 100 ports per GPU recommended", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Kernel | Latest security patch level for your Ubuntu release", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "NVIDIA driver | A currently supported release for your GPU", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "SSH login | SSH keys only, password authentication disabled", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "SSH access keys | A unique key pair per machine, never shared or reused", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Storage type | SSD", "source": "https://docs.vast.ai/host/verification-stages"},
+    {"requirement": "Reliability score | Over 90%", "source": "https://docs.vast.ai/host/verification-stages"}
+  ]
+}

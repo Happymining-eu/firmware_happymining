@@ -1,0 +1,33 @@
+#!/bin/sh
+# prerm of happymining-agent: stop the agent; on removal also disable the
+# units. Nothing else on the machine is stopped or changed: Docker, the Vast
+# host software and renter workloads are not touched.
+set -e
+
+UNITS="happymining-agent.service happymining-helper.socket happymining-firstboot.service"
+
+case "$1" in
+    remove | deconfigure)
+        if command -v systemctl >/dev/null 2>&1; then
+            if [ -d /run/systemd/system ]; then
+                systemctl stop happymining-agent.service happymining-helper.socket || true
+            fi
+            # shellcheck disable=SC2086
+            systemctl disable $UNITS >/dev/null 2>&1 || true
+        fi
+        ;;
+    upgrade)
+        # The new version's postinst starts the agent again. The state
+        # directory is not touched.
+        if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            systemctl stop happymining-agent.service || true
+        fi
+        ;;
+    failed-upgrade) ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

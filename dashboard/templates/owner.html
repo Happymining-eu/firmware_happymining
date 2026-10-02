@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ owner.display_name }} · HappyMining OS{% endblock %}
+{% block content %}
+<h1>{{ owner.display_name }} {{ m.synthetic(owner.is_synthetic) }}</h1>
+<p class="lead">Earnings days {{ statement.period.start }} to {{ statement.period.end }} (UTC), amounts in USD.</p>
+
+<div class="grid">
+  <div class="tile primary">
+    <div class="label">Payable now</div>
+    <div class="value">{{ statement.balances_now.payable | money }}</div>
+    <div class="sub">Received by HappyMining and reconciled, rounded down to cents</div>
+  </div>
+  <div class="tile">
+    <div class="label">Reported, not yet received</div>
+    <div class="value">{{ statement.balances_now.accrued_reported | money }}</div>
+    <div class="sub">Reported by the provider. Not cash; not payable yet.</div>
+  </div>
+  <div class="tile">
+    <div class="label">Reserve</div>
+    <div class="value">{{ statement.balances_now.reserve | money }}</div>
+    <div class="sub">In an approved or submitted payout</div>
+  </div>
+  <div class="tile">
+    <div class="label">Paid to date</div>
+    <div class="value">{{ statement.balances_now.confirmed_paid_to_date | money }}</div>
+    <div class="sub">Confirmed with bank evidence</div>
+  </div>
+</div>
+
+<h2>Statement</h2>
+<div class="two">
+  <div class="panel">
+    <dl class="kv">
+      <dt>Eligible base (received and reconciled)</dt><dd>{{ statement.reconciled.eligible_base | money }}</dd>
+      <dt>Management fee</dt><dd>− {{ statement.reconciled.management_fee | money }}</dd>
+      <dt>Your share</dt><dd><strong>{{ statement.reconciled.owner_share | money }}</strong></dd>
+      <dt>Provider adjustments in period</dt>
+      <dd>{{ statement.adjustments.net_amount | money }} ({{ statement.adjustments.count }})</dd>
+      <dt>Reserve</dt><dd>{{ statement.balances_now.reserve | money }}</dd>
+      <dt>Payable</dt><dd><strong>{{ statement.balances_now.payable | money }}</strong></dd>
+    </dl>
+  </div>
+  <div class="panel">
+    <dl class="kv">
+      <dt>Provider-reported earnings</dt><dd>{{ statement.reported.provider_reported_earnings | money }}</dd>
+      <dt>Of which not yet received</dt><dd>{{ statement.outstanding_not_received.base | money }}</dd>
+      <dt>Management fee rate</dt>
+      <dd>
+        {% if fee %}{{ "%.2f" | format(fee.rate * 100) }}%
+          {% if fee.is_demo_assumption %}<span class="pill synthetic">demo assumption</span>{% endif %}
+        {% else %}not set{% endif %}
+      </dd>
+      <dt>Payout details on file</dt><dd>{% if beneficiary %}{{ beneficiary.masked_hint }}{% else %}none{% endif %}</dd>
+    </dl>
+    <p class="note">{{ statement.disclaimer }}</p>
+  </div>
+</div>
+
+<h2>Machines</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Machine</th><th>Agent</th><th>Provider status</th><th>Hardware</th></tr></thead>
+    <tbody>
+    {% for x in machines %}
+      <tr>
+        <td><a href="/machines/{{ x.id }}">{{ x.label }}</a> {{ m.synthetic(x.synthetic) }}</td>
+        <td>{{ m.connection(x) }}</td>
+        <td>{{ m.rental(x.provider) }}</td>
+        <td>{% for g in x.hardware.gpus or [] %}{{ g.name }}{% if not loop.last %}, {% endif %}{% else %}<span class="note">no data yet</span>{% endfor %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="note">No machines registered yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Payout history</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Date</th><th class="num">Amount</th><th>Status</th><th>Reference</th></tr></thead>
+    <tbody>
+    {% for p in payouts %}
+      <tr>
+        <td>{{ p.updated_at[:10] }}</td>
+        <td class="num">{{ p.amount | money }} {{ p.currency }}</td>
+        <td>{{ m.status(p.status) }} {{ m.synthetic(p.synthetic) }}</td>
+        <td class="mono">{{ p.reference }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="note">No payouts yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,139 @@
+# HappyMining OS control plane on a single host (pilot scale).
+#
+#   cp deploy/.env.example deploy/.env      # fill it in; never commit it
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#
+# Services: PostgreSQL, a one-shot migration job, the API (which also serves
+# the dashboard), the background worker, and Caddy as the TLS reverse proxy.
+# Only Caddy publishes ports. The database is never exposed.
+#
+# Two database roles: "happymining" owns the schema and is used by the
+# migration job only; "happymining_app" is what the API and worker run as.
+#
+# This file starts whatever mode deploy/.env selects. For a DEMO staging
+# instance add deploy/docker-compose.demo.yml (see deploy/README.md).
+
+name: happymining
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: api/Dockerfile
+  image: happymining-api:${HM_IMAGE_TAG:-local}
+  restart: unless-stopped
+  env_file:
+    # deploy/.env by default; HM_ENV_FILE points elsewhere (used by `make compose-config`).
+    - path: ${HM_ENV_FILE:-.env}
+      required: true
+  environment:
+    # The API and the worker connect as an unprivileged role that cannot
+    # disable triggers and has no UPDATE or DELETE on the journal or the audit
+    # trail. Only the migration job uses the owner role.
+    HM_DATABASE_URL: postgresql+psycopg://happymining_app:${HM_DB_APP_PASSWORD:?set HM_DB_APP_PASSWORD in deploy/.env}@db:5432/happymining
+    # Number of reverse proxies in front of the API that set X-Forwarded-For.
+    # One (Caddy) in this file. Add one for each further proxy or load
+    # balancer in front of Caddy, or rate limits will see a single client.
+    HM_TRUSTED_PROXY_HOPS: "${HM_TRUSTED_PROXY_HOPS:-1}"
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - backend
+
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: happymining
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: happymining
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U happymining -d happymining"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  migrate:
+    <<: *app
+    restart: "no"
+    environment:
+      # Owner role: creates the schema, then creates or updates the runtime role.
+      HM_DATABASE_URL: postgresql+psycopg://happymining:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db:5432/happymining
+      HM_DB_APP_PASSWORD: ${HM_DB_APP_PASSWORD:?set HM_DB_APP_PASSWORD in deploy/.env}
+    command:
+      - sh
+      - -c
+      - python -m happymining.cli migrate && python -m happymining.cli setup-runtime-role
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "happymining.worker"]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "${HM_HTTP_PORT:-80}:80"
+      - "${HM_HTTPS_PORT:-443}:443"
+    environment:
+      HM_SITE_ADDRESS: ${HM_SITE_ADDRESS:?set HM_SITE_ADDRESS in deploy/.env}
+      HM_ACME_EMAIL: ${HM_ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    networks:
+      - backend
+
+  # On-demand database backup:  docker compose ... run --rm backup
+  backup:
+    image: postgres:16-bookworm
+    profiles: ["ops"]
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - ${HM_BACKUP_DIR:-./backups}:/backups
+      - ../scripts/backup.sh:/usr/local/bin/hm-backup:ro
+    entrypoint: ["/usr/local/bin/hm-backup"]
+    command: ["--host", "db", "--user", "happymining", "--database", "happymining", "--out-dir", "/backups"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  backend:

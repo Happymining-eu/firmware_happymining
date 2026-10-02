@@ -1,0 +1,37 @@
+[Unit]
+Description=HappyMining first boot: create the random install identity
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+# Runs once per installation: only while the identity does not exist. An
+# image must never ship an identity, so every machine generates its own.
+ConditionPathExists=!/var/lib/happymining/identity
+After=local-fs.target
+Before=happymining-agent.service
+
+[Service]
+Type=oneshot
+User=happymining
+Group=happymining
+ExecStart=/usr/bin/happyminingctl identity init
+UMask=0077
+StateDirectory=happymining
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/happymining
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

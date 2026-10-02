@@ -1,0 +1,20 @@
+# --- HappyMining OS entries (added by os/image/build-iso.sh) -----------------
+# Entry 1 loads the GENERIC seed from the installation medium through
+# cloud-init's NoCloud line configuration. The installer asks for the disk and
+# the account, and because the kernel parameter that pre-confirms an automatic
+# installation is deliberately absent, it also asks for confirmation before it
+# changes any disk.
+menuentry "Install HappyMining OS" {
+	set gfxpayload=keep
+	linux	@@KERNEL@@ ds=nocloud\;s=file:///cdrom/happymining/seed/ ---
+	initrd	@@INITRD@@
+}
+# Entry 2 passes no seed location: cloud-init then looks for a volume labelled
+# CIDATA (a per-machine seed made with os/autoinstall/render-seed.sh and
+# make-seed-volume.sh). The installer still asks for confirmation.
+menuentry "Install HappyMining OS with a per-machine seed volume (CIDATA)" {
+	set gfxpayload=keep
+	linux	@@KERNEL@@ ---
+	initrd	@@INITRD@@
+}
+# --- end of HappyMining OS entries -------------------------------------------

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Sign in · HappyMining OS{% endblock %}
+{% block content %}
+<div class="login">
+  <h1>Sign in</h1>
+  <form class="stack" method="post" action="/login">
+    <label>Email <input type="email" name="email" autocomplete="username" required></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+    <label>Authenticator code (if enabled)
+      <input type="text" name="totp_code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+
+  {% if demo_users %}
+    <h2>Demo accounts</h2>
+    <p class="note">Available in DEMO mode only. These accounts see synthetic data and have no password.</p>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+        {% for u in demo_users %}
+          <tr>
+            <td>{{ u.display_name or u.email }}<div class="note">{{ u.role }}</div></td>
+            <td class="num">
+              <form class="inline" method="post" action="/demo-login">
+                <input type="hidden" name="email" value="{{ u.email }}">
+                <button class="secondary" type="submit">Enter demo</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

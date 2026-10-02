@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ machine.label }} · HappyMining OS{% endblock %}
+{% block content %}
+<h1>{{ machine.label }} {{ m.synthetic(machine.synthetic) }}</h1>
+
+<div class="grid">
+  <div class="tile">
+    <div class="label">Agent</div>
+    <div class="value">{{ m.connection(machine) }}</div>
+    <div class="sub">Last seen {{ machine.last_seen_age_s | age }}{% if machine.agent_version %} · agent {{ machine.agent_version }}{% endif %}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Provider rental state</div>
+    <div class="value">{{ m.rental(machine.provider) }}</div>
+    <div class="sub">
+      {% if machine.provider %}
+        Listed: {% if machine.provider.listed is none %}unknown{% else %}{{ "yes" if machine.provider.listed else "no" }}{% endif %}
+        · observed {{ machine.provider.state_observed_at or "never" }}
+      {% else %}Not bound to a provider machine{% endif %}
+    </div>
+  </div>
+  {% if latest %}
+  <div class="tile">
+    <div class="label">GPU utilisation (avg)</div>
+    <div class="value">{% if latest.gpu_util_avg is none %}n/a{% else %}{{ latest.gpu_util_avg }}%{% endif %}</div>
+    <div class="sub">Not an indicator of rental state</div>
+  </div>
+  <div class="tile">
+    <div class="label">GPU power</div>
+    <div class="value">{% if latest.gpu_power_w is none %}n/a{% else %}{{ latest.gpu_power_w }} W{% endif %}</div>
+    <div class="sub">Max temperature {% if latest.gpu_temp_max is none %}n/a{% else %}{{ latest.gpu_temp_max }} °C{% endif %}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if machine.provider and machine.provider.state_detail %}<p class="note">{{ machine.provider.state_detail }}</p>{% endif %}
+{% if machine.connection == "stale" %}
+  <p class="flash err">Telemetry is stale: the figures below are from {{ machine.last_seen_age_s | age }}. A silent agent does not mean the machine stopped hosting.</p>
+{% endif %}
+
+<h2>Latest telemetry {% if latest %}<span class="note">collected {{ latest.collected_at }}</span>{% endif %}</h2>
+{% if latest %}
+  {{ m.synthetic(latest.synthetic) }}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>GPU</th><th>Driver</th><th class="num">VRAM used / total (MiB)</th><th class="num">Util</th><th class="num">Power</th><th class="num">Temp</th></tr></thead>
+      <tbody>
+      {% for g in latest.payload.gpus or [] %}
+        <tr>
+          <td>{{ g.index }}</td><td>{{ g.name or "unknown" }}</td><td class="mono">{{ g.driver_version or "–" }}</td>
+          <td class="num">{{ g.vram_used_mib if g.vram_used_mib is not none else "n/a" }} / {{ g.vram_total_mib if g.vram_total_mib is not none else "n/a" }}</td>
+          <td class="num">{{ g.util_pct if g.util_pct is not none else "n/a" }}{% if g.util_pct is not none %}%{% endif %}</td>
+          <td class="num">{{ g.power_w if g.power_w is not none else "n/a" }}{% if g.power_w is not none %} W{% endif %}</td>
+          <td class="num">{{ g.temp_c if g.temp_c is not none else "n/a" }}{% if g.temp_c is not none %} °C{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="note">The agent reported no GPUs.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="two">
+    <div class="panel">
+      <dl class="kv">
+        <dt>CPU</dt><dd>{{ (latest.payload.cpu or {}).model or "unknown" }} · {{ (latest.payload.cpu or {}).cores or "?" }} cores</dd>
+        <dt>Load (1 min)</dt><dd>{% set load = (latest.payload.cpu or {}).load1 %}{{ load if load is not none and load is defined else "n/a" }}</dd>
+        <dt>Memory available</dt>
+        <dd>{% set mem = latest.payload.memory or {} %}
+          {% if mem.available_bytes is not none and mem.available_bytes is defined %}{{ (mem.available_bytes / 1073741824) | round(1) }} GiB{% else %}n/a{% endif %}
+          {% if mem.total_bytes is not none and mem.total_bytes is defined %}of {{ (mem.total_bytes / 1073741824) | round(1) }} GiB{% endif %}</dd>
+        <dt>Uptime</dt><dd>{% if latest.payload.uptime_s is not none and latest.payload.uptime_s is defined %}{{ (latest.payload.uptime_s / 3600) | round(1) }} h{% else %}n/a{% endif %}</dd>
+      </dl>
+    </div>
+    <div class="panel">
+      <dl class="kv">
+        {% for name, state in (latest.payload.services or {}).items() %}
+          <dt>{{ name }}</dt><dd>{{ m.status(state) }}</dd>
+        {% endfor %}
+        {% for d in latest.payload.disks or [] %}
+          <dt>{{ d.mount }} ({{ d.fs }})</dt>
+          <dd>{% if d.avail_bytes is not none and d.avail_bytes is defined %}{{ (d.avail_bytes / 1073741824) | round(1) }} GiB free{% else %}n/a{% endif %}</dd>
+        {% endfor %}
+      </dl>
+    </div>
+  </div>
+{% else %}
+  <p class="note">No telemetry received yet.</p>
+{% endif %}
+
+<h2>Operations</h2>
+{% if role == "admin" and machine.connection != "unpaired" %}
+  <form class="row" method="post" action="/machines/{{ machine.id }}/operations">
+    {{ m.csrf_field(csrf) }}
+    <label>Request a read-only operation
+      <select name="op_type">{% for t in safe_types %}<option value="{{ t }}">{{ t | replace("_", " ") }}</option>{% endfor %}</select>
+    </label>
+    <button type="submit">Queue</button>
+  </form>
+  <p class="note">There is no remote shell. Restart, reboot and benchmark requests go through the rental-protection gate and are disabled by default.</p>
+{% endif %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Issued</th><th>Type</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for o in operations %}
+      <tr><td>{{ o.issued_at[:19] }}</td><td>{{ o.type }}</td><td>{{ m.status(o.status) }}</td><td class="wrap">{{ o.detail }}</td></tr>
+    {% else %}
+      <tr><td colspan="4" class="note">No operations requested.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

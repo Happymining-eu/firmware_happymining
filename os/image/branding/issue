@@ -1,0 +1,23 @@
+
+  HappyMining OS      host: \n      console: \l
+
+  This machine is a GPU host managed with HappyMining.
+
+  First steps, on this console or over SSH:
+
+    1. Pair the machine. Ask your HappyMining administrator for a pairing
+       code (it is single-use and expires quickly), then run:
+
+           sudo happyminingctl pair
+
+    2. Check the hardware and system requirements:
+
+           happyminingctl preflight
+
+    3. Enrol the machine with Vast.ai yourself (local operator step):
+
+           happyminingctl vast-enroll-help
+
+  No account password, SSH key, pairing code or Vast key ships with this
+  image. This machine created its own identity on first boot.
+

@@ -1,0 +1,6 @@
+# Entry point for platforms that look for a Compose file at the repository
+# root. The real definition lives in deploy/; see deploy/README.md.
+#
+#   docker compose --env-file deploy/.env up -d --build
+include:
+  - path: deploy/docker-compose.yml

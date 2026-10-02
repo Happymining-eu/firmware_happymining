@@ -1,0 +1,52 @@
+# Overlay for a DEMO staging instance. Synthetic data only.
+#
+#   docker compose -p happymining-demo \
+#     -f deploy/docker-compose.yml -f deploy/docker-compose.demo.yml \
+#     --env-file deploy/.env.demo up -d --build
+#
+# It forces DEMO mode with the fake provider and the mock payout provider,
+# seeds the synthetic demo data, and puts HTTP basic authentication in front of
+# every page, because the demo login has no passwords.
+#
+# A demo is a separate deployment: its own project name (so its own database
+# volume), its own env file, its own host name. Do not apply this overlay to a
+# LIVE stack. If someone does, the API refuses to start: a database records the
+# mode it was first used in and rejects the other one.
+
+name: happymining-demo
+
+x-demo-env: &demo-env
+  HM_MODE: demo
+  HM_PROVIDER: fake
+  HM_DEMO_LOGIN_ENABLED: "true"
+  HM_PAYOUTS_ENABLED: "true"
+  HM_PAYOUT_PROVIDER: mock
+  HM_PROVIDER_MUTATIONS_ENABLED: "false"
+  HM_DISRUPTIVE_OPERATIONS_ENABLED: "false"
+  HM_VAST_API_KEY: ""
+
+services:
+  migrate:
+    environment: *demo-env
+    command:
+      - sh
+      - -c
+      - >-
+        python -m happymining.cli migrate &&
+        python -m happymining.cli setup-runtime-role &&
+        python -m happymining.cli seed-demo
+
+  api:
+    environment: *demo-env
+
+  worker:
+    environment: *demo-env
+
+  caddy:
+    environment:
+      HM_BASIC_AUTH_USER: ${HM_BASIC_AUTH_USER:?set HM_BASIC_AUTH_USER in deploy/.env}
+      HM_BASIC_AUTH_HASH: ${HM_BASIC_AUTH_HASH:?set HM_BASIC_AUTH_HASH in deploy/.env (caddy hash-password)}
+    volumes:
+      - ./Caddyfile.demo:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config

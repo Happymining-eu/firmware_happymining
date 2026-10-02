@@ -1,0 +1,4 @@
+/etc/happymining/agent.env
+/etc/happymining/helper.conf
+/etc/issue.d/happymining.issue
+/etc/update-motd.d/60-happymining

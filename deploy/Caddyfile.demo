@@ -1,0 +1,51 @@
+# DEMO staging: same proxy, with HTTP basic authentication in front of everything.
+# The demo login has no passwords, so the demo must not be open to the internet.
+{
+	email {$HM_ACME_EMAIL}
+	admin off
+}
+
+{$HM_SITE_ADDRESS} {
+	encode zstd gzip
+
+	request_body {
+		max_size 1MB
+	}
+
+	@metrics path /metrics
+	respond @metrics 404
+
+	# What needs the password: every page, and the passwordless demo login.
+	# What does not: liveness, and the JSON API, which has its own
+	# authentication (a session token that can only be obtained through the
+	# protected demo login, or a device credential obtained by pairing). The
+	# API cannot share the Authorization header with basic authentication.
+	@pages {
+		not path /healthz
+		not path /api/v1/*
+		not path /static/*
+	}
+	@demo_login path /api/v1/auth/demo-login /api/v1/auth/login
+	basic_auth @pages {
+		{$HM_BASIC_AUTH_USER} {$HM_BASIC_AUTH_HASH}
+	}
+	basic_auth @demo_login {
+		{$HM_BASIC_AUTH_USER} {$HM_BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-For {remote_host}
+		health_uri /healthz
+		health_interval 15s
+	}
+
+	header {
+		-Server
+		X-Robots-Tag "noindex, nofollow"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}HappyMining OS{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+{% if demo %}
+  <div class="demo-banner" role="status">
+    DEMO MODE — every machine, earning, receipt and payout on this site is SYNTHETIC. No real money, no real hardware.
+  </div>
+{% endif %}
+{% if user %}
+  <header class="top">
+    <a class="brand" href="/dashboard">HappyMining OS</a>
+    <nav aria-label="Main">
+      <a href="/dashboard">Overview</a>
+      <a href="/earnings">Earnings</a>
+      {% if role in ("admin", "auditor") %}
+        <a href="/admin/pairing">Pairing</a>
+        <a href="/admin/provider">Provider</a>
+        <a href="/admin/exceptions">Exceptions</a>
+        <a href="/admin/fees">Fees</a>
+        <a href="/admin/settlements">Settlements</a>
+        <a href="/admin/audit">Audit</a>
+      {% endif %}
+    </nav>
+    <span class="who">{{ user.email }} · {{ role }}{% if user.is_demo %} · demo account{% endif %}</span>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="secondary" type="submit">Sign out</button>
+    </form>
+  </header>
+{% endif %}
+<main>
+  {% if message %}<div class="flash ok" role="status">{{ message }}</div>{% endif %}
+  {% if error %}<div class="flash err" role="alert">{{ error }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
