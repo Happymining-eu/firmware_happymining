@@ -28,7 +28,7 @@ DEMO_ENV = HM_MODE=demo HM_PROVIDER=fake \
 	HM_PUBLIC_BASE_URL=http://127.0.0.1:$(PORT) HM_ALLOWED_HOSTS=127.0.0.1,localhost PYTHONPATH=$(ROOT)/api
 
 .PHONY: help setup dev demo test test-api test-os test-agent lint fmt build-agent build-installer \
-        smoke-test checksums dev-signing-key db-start db-stop compose-config clean
+        smoke-test checksums dev-signing-key db-start db-stop compose-config lock-export clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -72,8 +72,12 @@ test-os: $(PY) ## Installer and image tooling tests
 	$(PY) -m pytest tests/os
 
 lint: $(PY) ## Static checks: ruff, gofmt, go vet, shellcheck, compose file
-	cd api && $(PY) -m ruff check happymining ../tests/api ../scripts ../migrations
+	cd api && $(PY) -m ruff check happymining ../tests/api ../scripts ../migrations ../deploy ../integrations
 	cd api && $(PY) -m ruff format --check happymining ../migrations
+	@# The hash-pinned requirements used by deploy/hostinger must match the lockfile.
+	cd api && uv export --frozen --no-dev --no-emit-project --format requirements-txt -q \
+	  | grep -v '^ *#' | diff -q - <(grep -v '^ *#' requirements.lock.txt) >/dev/null \
+	  || { echo "api/requirements.lock.txt is stale: run 'make lock-export'"; exit 1; }
 	cd agent && test -z "$$(gofmt -l .)" && go vet ./...
 	@if command -v shellcheck >/dev/null 2>&1; then \
 	  shellcheck -x scripts/*.sh agent/scripts/*.sh $$(find os -name '*.sh'); \
@@ -89,6 +93,9 @@ compose-config: ## Validate the Docker Compose files against the example configu
 	    docker compose --env-file hostinger/.env.example -f hostinger/docker-compose.yml config --quiet && \
 	  echo "compose files are valid"; \
 	else echo "docker compose not installed: compose files were NOT validated"; fi
+
+lock-export: ## Regenerate api/requirements.lock.txt (hash-pinned) from api/uv.lock
+	cd api && uv export --frozen --no-dev --no-emit-project --format requirements-txt -q -o requirements.lock.txt
 
 fmt: $(PY) ## Format Python and Go sources
 	cd api && $(PY) -m ruff format happymining ../migrations ../tests/api ../scripts

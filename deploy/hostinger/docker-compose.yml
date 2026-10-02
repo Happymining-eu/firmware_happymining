@@ -5,11 +5,15 @@
 # publishes no port of its own and has no Caddy: Traefik terminates TLS and
 # routes to the API by container label.
 #
-# The file is self-contained on purpose. The Hostinger Docker manager deploys a
-# compose file plus an environment block; there is no checkout of this
-# repository on the server. Docker therefore builds the image straight from
-# the Git repository, at the commit named by HM_GIT_REF. A new commit is a new
-# image tag, so a redeploy with a new HM_GIT_REF rebuilds.
+# The Hostinger Docker manager deploys a compose file plus an environment
+# block. It pulls images and starts containers; it never builds one, and there
+# is no checkout of this repository on the server. So this file uses stock
+# images only. A one-shot "bootstrap" container fetches the commit named by
+# HM_GIT_REF from GitHub and installs the hash-pinned dependencies into a
+# volume (deploy/hostinger/bootstrap.py); the migration job, the API and the
+# worker then run from that volume, read-only, as an unprivileged user.
+# A redeploy with a new HM_GIT_REF prepares the new version next to the old one
+# and removes the old one when the new one is complete.
 #
 # Every value comes from the project's environment (see .env.example next to
 # this file). Nothing secret is written here.
@@ -25,12 +29,17 @@
 name: happymining-os
 
 x-app: &app
-  build:
-    context: ${HM_GIT_URL:-https://github.com/Happymining-eu/firmware_happymining.git}#${HM_GIT_REF:?set HM_GIT_REF to the commit to deploy}
-    dockerfile: api/Dockerfile
-  image: happymining-api:${HM_GIT_REF}
+  image: python:3.13-slim-bookworm
   restart: unless-stopped
+  user: "10001:10001"
+  working_dir: /opt/hm/${HM_GIT_REF:?set HM_GIT_REF to the commit to deploy}
+  volumes:
+    - app:/opt/hm:ro
   environment: &app-env
+    PYTHONPATH: /opt/hm/${HM_GIT_REF}/api:/opt/hm/${HM_GIT_REF}/site
+    PYTHONUNBUFFERED: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+    HM_MIGRATIONS_DIR: /opt/hm/${HM_GIT_REF}/migrations
     HM_MODE: ${HM_MODE:?set HM_MODE to demo or live}
     HM_PROVIDER: ${HM_PROVIDER:?set HM_PROVIDER to fake (demo) or vast (live)}
     HM_SECRET_KEY: ${HM_SECRET_KEY:?set HM_SECRET_KEY}
@@ -67,6 +76,38 @@ x-app: &app
     - backend
 
 services:
+  # Prepares /opt/hm/<commit>: the source of that commit and its dependencies.
+  # Runs as root inside the container only to write into the volume, with no
+  # capabilities; everything else reads the volume as an unprivileged user.
+  bootstrap:
+    image: python:3.13-slim-bookworm
+    restart: "no"
+    volumes:
+      - app:/opt/hm
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    environment:
+      HM_GIT_REPO: ${HM_GIT_REPO:-Happymining-eu/firmware_happymining}
+      HM_GIT_REF: ${HM_GIT_REF}
+    # The script comes from the same commit it is about to fetch.
+    command:
+      - python
+      - -c
+      - >-
+        import os, urllib.request as u;
+        repo, ref = os.environ["HM_GIT_REPO"], os.environ["HM_GIT_REF"];
+        src = u.urlopen(f"https://raw.githubusercontent.com/{repo}/{ref}/deploy/hostinger/bootstrap.py", timeout=60).read();
+        ns = {"__name__": "bootstrap"};
+        exec(compile(src, "bootstrap.py", "exec"), ns);
+        ns["prepare"](repo, ref, __import__("pathlib").Path("/opt/hm"))
+    networks:
+      - backend
+
   db:
     image: postgres:16-bookworm
     restart: unless-stopped
@@ -105,11 +146,31 @@ services:
         python -m happymining.cli setup-runtime-role &&
         if [ "$$HM_MODE" = "demo" ]; then python -m happymining.cli seed-demo; fi
     depends_on:
+      bootstrap:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
 
   api:
     <<: *app
+    command:
+      - python
+      - -m
+      - uvicorn
+      - happymining.main:app_factory
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-proxy-headers
+      - --no-server-header
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -165,14 +226,13 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "happymining.worker"]
-    healthcheck:
-      disable: true
     depends_on:
       migrate:
         condition: service_completed_successfully
 
 volumes:
   db-data:
+  app:
 
 networks:
   backend:

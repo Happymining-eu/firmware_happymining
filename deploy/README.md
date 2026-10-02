@@ -7,7 +7,7 @@ are single-host Docker Compose stacks for pilot scale.
 |---|---|---|
 | Files | `deploy/docker-compose.yml` (+ `docker-compose.demo.yml`) | `deploy/hostinger/docker-compose.yml` |
 | Reverse proxy | Caddy, in the stack, publishes 80/443 | The host's Traefik; the stack publishes nothing |
-| Source | A checkout of this repository on the host | Built by Docker from the Git repository at a pinned commit |
+| Source | A checkout of this repository on the host, built into an image | Stock images; a bootstrap container fetches a pinned commit and its hash-pinned dependencies |
 | Config | `deploy/.env` (from `deploy/.env.example`) | The project's environment (from `deploy/hostinger/.env.example`) |
 
 What neither of them does: deploy a LIVE instance for you. LIVE needs
@@ -53,11 +53,21 @@ Consequences:
   80/443. `deploy/hostinger/docker-compose.yml` joins `proxy` and is routed by
   label.
 - The Hostinger API can deploy a Compose project from a compose file and an
-  environment block. It cannot copy files to the server or run commands on it.
-  So the image is built by Docker from this Git repository
-  (`build.context: <repo>.git#<commit>`). **The commit has to be pushed to
-  GitHub first**, and the repository has to be readable by the server (it is
-  public).
+  environment block. It cannot copy files to the server or run commands on
+  it, and its Docker manager **pulls images and starts containers; it never
+  builds one** (a compose file with `build:` fails there with "No such
+  image"). So the stack uses stock images only: a one-shot `bootstrap`
+  container downloads the tarball of the commit named by `HM_GIT_REF` from
+  GitHub and installs `api/requirements.lock.txt` with `--require-hashes`
+  (wheels only) into a volume; the migration job, the API and the worker run
+  from that volume, read-only, as an unprivileged user
+  (`deploy/hostinger/bootstrap.py`). **The commit has to be pushed to GitHub
+  first**, and the repository has to be readable by the server (it is public).
+- Trade-off: this is weaker than a pre-built image. What runs is fetched at
+  start-up, the base image is pinned by tag and not by digest, and the server
+  needs GitHub and PyPI to deploy a new version (not to restart the current
+  one). The proper replacement is an image built and published by CI; the
+  compose file then only changes its `image:` and loses the bootstrap step.
 - It is a shared host. Several containers there mount the Docker socket, which
   is root on the host. Acceptable for a demo with synthetic data. For LIVE,
   with beneficiary bank details and the Vast account key, use a host that runs
@@ -67,17 +77,21 @@ Consequences:
 
 1. Push the commit to deploy.
 2. Create (or replace) the project with the Hostinger API operation
-   `vps_docker_create`: `project_name` `happymining-os`, `content` the text of
-   `deploy/hostinger/docker-compose.yml`, `environment` the filled-in
-   variables from `deploy/hostinger/.env.example`, with `HM_GIT_REF` set to
-   the commit SHA.
+   `vps_docker_create`: `project_name` `happymining-os`, `content` the **text**
+   of `deploy/hostinger/docker-compose.yml` (not a URL: a GitHub URL is
+   resolved to the compose file at the root of the repository, which is the
+   wrong one), `environment` the filled-in variables from
+   `deploy/hostinger/.env.example`, with `HM_GIT_REF` set to the full commit
+   SHA.
 3. Check: `vps_docker_containers` (the `api` container must be `healthy`,
    `migrate` exited 0), `vps_docker_logs`, then
    `https://<HM_PUBLIC_HOST>/healthz`.
 
-A redeploy with a new `HM_GIT_REF` builds a new image tag and recreates the
-containers; the database volume stays. Deleting the project deletes the
-volume.
+A redeploy with a new `HM_GIT_REF` prepares the new version next to the
+current one, recreates the containers, and removes the old version once the
+new one is complete; the database volume stays. Deleting the project deletes
+the volumes. `make lock-export` regenerates `api/requirements.lock.txt` after
+a dependency change; `make lint` fails if it is stale.
 
 ### Host names
 
