@@ -7,8 +7,9 @@ to any financial data and cannot choose its owner or its machine.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Path, Request, Response
 from sqlalchemy.orm import Session
 
 from .. import ratelimit
@@ -20,12 +21,17 @@ from ..errors import PairingFailed
 from ..models import utcnow
 from ..providers.registry import get_provider
 from ..schemas import AckIn, EnrollIn, HeartbeatIn
+from ..services import appliance as appliance_service
 from ..services import devices as device_service
 from ..services import operations as operation_service
+from ..services import releases as release_service
 from ..services.devices import DevicePrincipal
 from ..services.pairing import enroll_device
 
 router = APIRouter(prefix="/api/v1", tags=["device"])
+
+# A package is large. An agent downloads one per update; this leaves room for retries.
+ARTIFACT_DOWNLOADS_PER_HOUR = 12
 
 
 def _provider_or_none(settings: Settings):
@@ -84,11 +90,20 @@ def heartbeat(
         boot_id=body.boot_id,
         agent_version=body.agent_version,
     )
+    # An agent that sends no appliance object gets nothing about it back
+    # (docs/appliance.md, section 6): nothing changes for agent 0.1.0.
+    # Before the operations: the appliance row is locked first, then operation
+    # rows, the same order in which a change made by a person takes them.
+    appliance = None
+    if body.appliance is not None:
+        appliance = appliance_service.heartbeat_exchange(
+            db, principal.machine, body.appliance, actor=Actor("device", str(principal.device.id))
+        )
     operations = operation_service.pending_for_device(
         db, settings, _provider_or_none(settings), principal.device, principal.machine
     )
     db.commit()
-    return {
+    out = {
         "accepted": result.accepted,
         "duplicates": result.duplicates,
         "rejected": result.rejected,
@@ -97,6 +112,9 @@ def heartbeat(
         "next_interval_s": settings.heartbeat_interval_s,
         "operations": [operation_service.serialize_for_device(op) for op in operations],
     }
+    if appliance is not None:
+        out["appliance"] = appliance
+    return out
 
 
 @router.get("/device/operations")
@@ -156,3 +174,30 @@ def device_self(principal: DevicePrincipal = Depends(get_device), db: Session = 
         "status": principal.device.status,
         "server_time": utcnow(),
     }
+
+
+# --- firmware updates (docs/appliance.md, section 6.6) -----------------------
+
+
+@router.get("/device/update")
+def device_update(
+    principal: DevicePrincipal = Depends(get_device),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """The machine's update channel and policy, and the release it may install now, if any."""
+    return release_service.offer_for_device(db, settings, principal.machine, principal.device)
+
+
+@router.get("/device/update/artifact/{version}")
+def device_update_artifact(
+    version: Annotated[str, Path(max_length=24)],
+    principal: DevicePrincipal = Depends(get_device),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """The package of a release offered on this machine's channel. Anything else is not found."""
+    # Counted before the session is used: one connection at a time (see deps.get_device).
+    ratelimit.hit(f"update-artifact:{principal.device.id}", ARTIFACT_DOWNLOADS_PER_HOUR, window_s=3600)
+    data = release_service.artifact_for_device(db, settings, principal.machine, version)
+    return Response(content=data, media_type="application/octet-stream")

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "id": "ollama",
+  "version": "1",
+  "name": "Ollama (fixture)",
+  "summary": "Runs open models on the machine's GPUs.",
+  "homepage": "https://example.invalid/ollama",
+  "license": "MIT",
+  "gpu": true,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [],
+  "ports": [
+    {
+      "name": "api",
+      "port": 11434,
+      "protocol": "http",
+      "ui": false
+    }
+  ],
+  "settings": {
+    "models": {
+      "type": "string_list",
+      "label": "Models to keep installed",
+      "env": "HM_SET_MODELS",
+      "max_items": 4,
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,80}(:[A-Za-z0-9._-]{1,40})?$",
+      "default": []
+    }
+  },
+  "secrets": [],
+  "images": [
+    {
+      "ref": "docker.io/example/ollama:1.0.0",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "models",
+      "backup": "models"
+    }
+  ],
+  "post_start": [
+    {
+      "service": "ollama",
+      "exec": [
+        "ollama",
+        "pull",
+        "{item}"
+      ],
+      "for_each": "models",
+      "timeout_s": 3600
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "id": "openclaw",
+  "version": "1",
+  "name": "OpenClaw",
+  "summary": "A personal AI assistant that can use tools and chat channels, set up to use the local models. Its control page asks for the gateway token set here, and each new browser must be approved once on the machine.",
+  "homepage": "https://openclaw.ai",
+  "license": "MIT",
+  "gpu": false,
+  "modes": [
+    "private_ai"
+  ],
+  "requires": [
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 18789,
+      "protocol": "http",
+      "ui": true
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "lan"
+    },
+    "default_model": {
+      "type": "string_list",
+      "label": "Default model as provider/model, e.g. ollama/ then a model installed in Ollama (at most one; empty: choose it in the page)",
+      "env": "HM_SET_DEFAULT_MODEL",
+      "max_items": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}/[A-Za-z0-9][A-Za-z0-9._:/-]{0,100}$",
+      "default": []
+    }
+  },
+  "secrets": [
+    {
+      "key": "gateway_token",
+      "env": "OPENCLAW_GATEWAY_TOKEN",
+      "label": "Gateway token: a long random text that the control page asks for",
+      "required": true
+    },
+    {
+      "key": "anthropic_api_key",
+      "env": "ANTHROPIC_API_KEY",
+      "label": "Anthropic API key (optional; what is asked to a cloud model leaves the machine)",
+      "required": false
+    },
+    {
+      "key": "openai_api_key",
+      "env": "OPENAI_API_KEY",
+      "label": "OpenAI API key (optional; what is asked to a cloud model leaves the machine)",
+      "required": false
+    },
+    {
+      "key": "openrouter_api_key",
+      "env": "OPENROUTER_API_KEY",
+      "label": "OpenRouter API key (optional; what is asked to a cloud model leaves the machine)",
+      "required": false
+    }
+  ],
+  "images": [
+    {
+      "ref": "docker.io/openclaw/openclaw:2026.9.7",
+      "digest": "sha256:0da12cd49983fcb5e4915fd3135ce7a33d82f93649b1df6964946d2c1d1dbcfc",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "state",
+      "backup": "always"
+    },
+    {
+      "name": "auth",
+      "backup": "always"
+    }
+  ],
+  "post_start": [
+    {
+      "service": "openclaw",
+      "exec": [
+        "node",
+        "/app/dist/index.js",
+        "config",
+        "set",
+        "--batch-json",
+        "[{\"path\":\"gateway.mode\",\"value\":\"local\"},{\"path\":\"update.checkOnStart\",\"value\":false}]"
+      ],
+      "timeout_s": 120
+    },
+    {
+      "service": "openclaw",
+      "exec": [
+        "node",
+        "/app/dist/index.js",
+        "config",
+        "set",
+        "--batch-json",
+        "[{\"path\":\"models.providers.ollama\",\"value\":{\"baseUrl\":\"http://ollama:11434\",\"api\":\"ollama\",\"apiKey\":\"ollama-local\",\"models\":[]}}]"
+      ],
+      "timeout_s": 120
+    },
+    {
+      "service": "openclaw",
+      "exec": [
+        "node",
+        "/app/dist/index.js",
+        "config",
+        "set",
+        "agents.defaults.model.primary",
+        "{item}"
+      ],
+      "for_each": "default_model",
+      "timeout_s": 120
+    }
+  ]
+}

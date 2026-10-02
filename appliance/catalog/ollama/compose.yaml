@@ -1,0 +1,39 @@
+# Ollama: local model runtime on the NVIDIA GPUs. See ../README.md for the sources.
+# Upstream: docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 ollama/ollama
+# The image already listens on 0.0.0.0:11434 inside the container (OLLAMA_HOST).
+services:
+  ollama:
+    image: docker.io/ollama/ollama:0.35.0@sha256:2a6e883b917fc543389599dae79918f5cac9e1438890506982f44aa4f5625d01
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=${HM_SET_KEEP_ALIVE}
+      - OLLAMA_CONTEXT_LENGTH=${HM_SET_CONTEXT_LENGTH}
+      - OLLAMA_NO_CLOUD=${HM_SET_LOCAL_ONLY}
+    volumes:
+      - models:/root/.ollama
+    ports:
+      - "${HM_BIND}:11434:11434"
+    networks:
+      - hm-appliance
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  models:
+
+networks:
+  hm-appliance:
+    external: true

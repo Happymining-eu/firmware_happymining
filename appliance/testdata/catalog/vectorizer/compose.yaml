@@ -1,0 +1,6 @@
+services:
+  vectorizer:
+    image: docker.io/library/python:3.12-slim
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: vectorizer

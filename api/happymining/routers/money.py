@@ -1,8 +1,11 @@
 """Fees, earnings, reconciliation, settlements, statements, exceptions, audit.
 
-Owners can read their own figures and nothing else. They cannot submit
-earnings, change fees, record receipts or approve payouts: every mutating
-route here requires the admin role. Devices have no access to any of it.
+Owners can read their own figures and nothing else, and inside an owner's
+organisation only its administrators (``org_admin``) can: operators and
+viewers have no money route at all (docs/appliance.md, section 3). Owners
+cannot submit earnings, change fees, record receipts or approve payouts:
+every mutating route here requires the admin role. Devices have no access to
+any of it.
 """
 
 from __future__ import annotations
@@ -58,8 +61,8 @@ from ..schemas import (
     UncertainIn,
     VoidIn,
 )
+from ..services import access, exceptions_queue, fees, payouts, receipts, statements
 from ..services import earnings as earnings_service
-from ..services import exceptions_queue, fees, payouts, receipts, statements
 from ..services.accounts import Principal
 from ..services.ledger import money_str, owner_balances, to_decimal, verify_ledger
 from . import views
@@ -68,6 +71,16 @@ router = APIRouter(prefix="/api/v1", tags=["money"])
 
 Limit = Query(50, ge=1, le=200)
 Offset = Query(0, ge=0)
+
+
+def require_money_reader(principal: Principal = Depends(require_any)) -> Principal:
+    """Whoever may read money figures: staff, and an organisation's administrators.
+
+    Every route here that an owner's user can reach depends on this, never on
+    ``require_any`` directly.
+    """
+    access.require_money_access(principal)
+    return principal
 
 
 # --- fees ------------------------------------------------------------------
@@ -88,7 +101,7 @@ def fee_view(schedule: FeeSchedule) -> dict:
 
 
 @router.get("/fee-schedules")
-def list_fees(principal: Principal = Depends(require_any), db: Session = Depends(get_db)):
+def list_fees(principal: Principal = Depends(require_money_reader), db: Session = Depends(get_db)):
     query = select(FeeSchedule).order_by(FeeSchedule.effective_from.desc())
     if principal.role == "owner":
         query = query.where(or_(FeeSchedule.owner_id.is_(None), FeeSchedule.owner_id == principal.owner_id))
@@ -129,7 +142,7 @@ def list_buckets(
     open_only: bool = False,
     limit: int = Limit,
     offset: int = Offset,
-    principal: Principal = Depends(require_any),
+    principal: Principal = Depends(require_money_reader),
     db: Session = Depends(get_db),
 ):
     scope = scoped_owner_id(principal, owner_id)
@@ -149,7 +162,7 @@ def list_buckets(
 
 @router.get("/earnings/buckets/{bucket_id}")
 def get_bucket(
-    bucket_id: uuid.UUID, principal: Principal = Depends(require_any), db: Session = Depends(get_db)
+    bucket_id: uuid.UUID, principal: Principal = Depends(require_money_reader), db: Session = Depends(get_db)
 ):
     bucket = db.get(EarningBucket, bucket_id)
     if bucket is None or (principal.role == "owner" and bucket.owner_id != principal.owner_id):
@@ -242,7 +255,7 @@ def list_imports(
 
 @router.get("/owners/{owner_id}/balance")
 def owner_balance(
-    owner_id: uuid.UUID, principal: Principal = Depends(require_any), db: Session = Depends(get_db)
+    owner_id: uuid.UUID, principal: Principal = Depends(require_money_reader), db: Session = Depends(get_db)
 ):
     owner = load_owner(db, principal, owner_id)
     return {
@@ -258,7 +271,7 @@ def owner_statement(
     owner_id: uuid.UUID,
     start: date | None = None,
     end: date | None = None,
-    principal: Principal = Depends(require_any),
+    principal: Principal = Depends(require_money_reader),
     db: Session = Depends(get_db),
 ):
     owner = load_owner(db, principal, owner_id)
@@ -272,7 +285,7 @@ def owner_statement(
 
 @router.get("/owners/{owner_id}/payouts")
 def owner_payouts(
-    owner_id: uuid.UUID, principal: Principal = Depends(require_any), db: Session = Depends(get_db)
+    owner_id: uuid.UUID, principal: Principal = Depends(require_money_reader), db: Session = Depends(get_db)
 ):
     owner = load_owner(db, principal, owner_id)
     return {"items": statements.owner_payout_history(db, owner.id)}
@@ -425,7 +438,7 @@ def put_beneficiary(
 
 @router.get("/owners/{owner_id}/beneficiary")
 def get_beneficiary(
-    owner_id: uuid.UUID, principal: Principal = Depends(require_any), db: Session = Depends(get_db)
+    owner_id: uuid.UUID, principal: Principal = Depends(require_money_reader), db: Session = Depends(get_db)
 ):
     """Only a masked hint is ever returned. Full details leave the system only in a payout export."""
     owner = load_owner(db, principal, owner_id)
@@ -638,7 +651,7 @@ def list_items(
     owner_id: uuid.UUID | None = None,
     limit: int = Limit,
     offset: int = Offset,
-    principal: Principal = Depends(require_any),
+    principal: Principal = Depends(require_money_reader),
     db: Session = Depends(get_db),
 ):
     scope = scoped_owner_id(principal, owner_id)

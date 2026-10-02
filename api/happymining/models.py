@@ -77,6 +77,9 @@ def ts(*, nullable: bool = False, default: bool = True) -> Mapped[Any]:
 # --------------------------------------------------------------------------
 
 ROLES = ("admin", "owner", "auditor")
+# What a user of role "owner" may do inside the owner's organisation
+# (docs/appliance.md, section 3). Staff roles have no organisation role.
+ORG_ROLES = ("org_admin", "org_operator", "org_viewer")
 
 
 class Owner(Base):
@@ -103,6 +106,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(200), default="")
     role: Mapped[str] = mapped_column(String(20))
     owner_id: Mapped[uuid.UUID | None] = fk("owners.id", nullable=True)
+    org_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(500), nullable=True)
     totp_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -118,6 +122,8 @@ class User(Base):
     __table_args__ = (
         CheckConstraint(in_list("role", ROLES), name="user_role"),
         CheckConstraint("(role = 'owner') = (owner_id IS NOT NULL)", name="user_owner_link"),
+        CheckConstraint("(role = 'owner') = (org_role IS NOT NULL)", name="user_org_role_link"),
+        CheckConstraint("org_role IS NULL OR " + in_list("org_role", ORG_ROLES), name="user_org_role"),
         CheckConstraint("email = lower(email)", name="user_email_lower"),
     )
 
@@ -145,6 +151,9 @@ class UserSession(Base):
 # --------------------------------------------------------------------------
 
 
+MANAGEMENT_KINDS = ("company", "customer")
+
+
 class Machine(Base):
     """A physical GPU server belonging to exactly one owner at a time."""
 
@@ -156,6 +165,11 @@ class Machine(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending_pairing")
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     hardware: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Who runs the machine day to day. "company": HappyMining staff manage it.
+    # "customer": staff need a remote-access grant from the owner's
+    # organisation to read its appliance configuration, change it or request
+    # operations (docs/appliance.md, section 3).
+    management: Mapped[str] = mapped_column(String(20), default="company", server_default="company")
     created_at: Mapped[datetime] = ts()
 
     owner: Mapped[Owner] = relationship()
@@ -164,6 +178,7 @@ class Machine(Base):
 
     __table_args__ = (
         CheckConstraint(in_list("status", ("pending_pairing", "active", "retired")), name="machine_status"),
+        CheckConstraint(in_list("management", MANAGEMENT_KINDS), name="machine_management"),
     )
 
 
@@ -354,6 +369,7 @@ API_CLIENT_SCOPES = (
     "operations:write",
     "operations:disruptive",
     "earnings:read",
+    "appliance:read",
 )
 
 
@@ -384,6 +400,107 @@ class ApiClient(Base):
     last_used_ip: Mapped[str] = mapped_column(String(64), default="")
 
     __table_args__ = (CheckConstraint(in_list("status", ("active", "revoked")), name="api_client_status"),)
+
+
+# --------------------------------------------------------------------------
+# Appliance: what a machine should run, who may manage it, firmware releases
+# (docs/appliance.md)
+# --------------------------------------------------------------------------
+
+APPLIANCE_MODES = ("vast", "private_ai", "vectorize")
+GRANT_LEVELS = ("view", "manage")
+RELEASE_CHANNELS = ("beta", "stable")
+RELEASE_STATUSES = ("awaiting_artifact", "ready", "withdrawn")
+
+
+class MachineAppliance(Base):
+    """The desired-state document of one machine and what the machine last reported.
+
+    ``document`` never contains secrets. ``secrets`` holds values sealed for
+    the machine's own key: this process stores and forwards them and has no
+    key to open them. ``reported`` comes from the device; it is displayed and
+    never used to decide what anyone may do.
+    """
+
+    __tablename__ = "machine_appliances"
+
+    id: Mapped[uuid.UUID] = pk()
+    machine_id: Mapped[uuid.UUID] = fk("machines.id", unique=True)
+    # 0: nothing was ever configured in the cloud; nothing is sent to the machine.
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    document: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    secrets: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    updated_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, index=False)
+    updated_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    # From the device.
+    reported: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    reported_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    applied_revision: Mapped[int] = mapped_column(Integer, default=0)
+    seal_public_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    machine: Mapped[Machine] = relationship()
+
+    __table_args__ = (CheckConstraint("revision >= 0", name="appliance_revision"),)
+
+
+class RemoteAccessGrant(Base):
+    """Permission, given by the owner's organisation, for HappyMining staff to
+    see or manage one customer-managed machine. Rows are never deleted: a grant
+    ends by expiring or by being revoked."""
+
+    __tablename__ = "remote_access_grants"
+
+    id: Mapped[uuid.UUID] = pk()
+    machine_id: Mapped[uuid.UUID] = fk("machines.id")
+    # The owner on whose behalf it was granted. A grant stops counting when
+    # the machine changes owner.
+    owner_id: Mapped[uuid.UUID] = fk("owners.id")
+    level: Mapped[str] = mapped_column(String(10))
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    granted_by: Mapped[uuid.UUID] = fk("users.id", index=False)
+    created_at: Mapped[datetime] = ts()
+    expires_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    revoked_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    revoked_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, index=False)
+
+    __table_args__ = (CheckConstraint(in_list("level", GRANT_LEVELS), name="grant_level"),)
+
+
+class Release(Base):
+    """A signed firmware release. The manifest is stored byte for byte: the
+    signature covers exactly those bytes."""
+
+    __tablename__ = "releases"
+
+    id: Mapped[uuid.UUID] = pk()
+    version: Mapped[str] = mapped_column(String(24), unique=True)
+    # The version again, as numbers, to order releases correctly.
+    v_major: Mapped[int] = mapped_column(Integer)
+    v_minor: Mapped[int] = mapped_column(Integer)
+    v_patch: Mapped[int] = mapped_column(Integer)
+    manifest: Mapped[bytes] = mapped_column(LargeBinary)
+    signature: Mapped[str] = mapped_column(String(128))
+    key_id: Mapped[str] = mapped_column(String(16))
+    filename: Mapped[str] = mapped_column(String(128))
+    size: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    min_upgrade_from: Mapped[str] = mapped_column(String(24), default="0.0.0")
+    notes: Mapped[str] = mapped_column(String(4000), default="")
+    status: Mapped[str] = mapped_column(String(20), default="awaiting_artifact")
+    channels: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # The package itself. Loaded only when a device downloads it.
+    artifact: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    created_by: Mapped[uuid.UUID | None] = fk("users.id", nullable=True, index=False)
+    created_at: Mapped[datetime] = ts()
+    published_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+    withdrawn_at: Mapped[datetime | None] = ts(nullable=True, default=False)
+
+    __table_args__ = (
+        CheckConstraint(in_list("status", RELEASE_STATUSES), name="release_status"),
+        CheckConstraint(
+            "(status = 'awaiting_artifact') = (artifact IS NULL)", name="release_artifact_present"
+        ),
+    )
 
 
 # --------------------------------------------------------------------------

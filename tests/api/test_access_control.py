@@ -68,7 +68,8 @@ def concrete(path: str) -> str:
 
 
 def call(client, method: str, path: str, **kw):
-    return client.request(method, concrete(path), **({"json": {}} if method in ("POST", "PUT") else {}), **kw)
+    body = {"json": {}} if method in ("POST", "PUT", "PATCH") else {}
+    return client.request(method, concrete(path), **body, **kw)
 
 
 def test_route_discovery_finds_the_api(app):
@@ -117,36 +118,106 @@ def test_credentials_of_one_kind_open_no_route_of_another_kind(app, client, worl
     assert checked > 150
 
 
+# What a user of an owner's organisation may reach, and the lowest organisation
+# role that may (docs/appliance.md, section 3). A human route that is not in this
+# table is refused to every owner's user: a new route has to be entered here with
+# its role, or it fails the tests below, which forces the decision of who may call it.
+SELF_SERVICE = {"/api/v1/auth/logout", "/api/v1/auth/mfa/enroll", "/api/v1/auth/mfa/activate"}
+ORG_RANK = {"org_viewer": 1, "org_operator": 2, "org_admin": 3}
+OWNER_ROUTES: dict[tuple[str, str], str] = {
+    # The organisation's own machines and their state: every role.
+    ("GET", "/api/v1/owners"): "org_viewer",
+    ("GET", "/api/v1/owners/{owner_id}"): "org_viewer",
+    ("GET", "/api/v1/machines"): "org_viewer",
+    ("GET", "/api/v1/machines/{machine_id}"): "org_viewer",
+    ("GET", "/api/v1/machines/{machine_id}/telemetry"): "org_viewer",
+    ("GET", "/api/v1/machines/{machine_id}/operations"): "org_viewer",
+    ("GET", "/api/v1/auth/me"): "org_viewer",
+    # Money: administrators only.
+    ("GET", "/api/v1/fee-schedules"): "org_admin",
+    ("GET", "/api/v1/earnings/buckets"): "org_admin",
+    ("GET", "/api/v1/earnings/buckets/{bucket_id}"): "org_admin",
+    ("GET", "/api/v1/owners/{owner_id}/balance"): "org_admin",
+    ("GET", "/api/v1/owners/{owner_id}/statement"): "org_admin",
+    ("GET", "/api/v1/owners/{owner_id}/payouts"): "org_admin",
+    ("GET", "/api/v1/owners/{owner_id}/beneficiary"): "org_admin",
+    ("GET", "/api/v1/payout-items"): "org_admin",
+    # The organisation's users, who manages a machine, remote access: administrators only.
+    ("GET", "/api/v1/org/users"): "org_admin",
+    ("POST", "/api/v1/org/users"): "org_admin",
+    ("PATCH", "/api/v1/org/users/{user_id}"): "org_admin",
+    ("GET", "/api/v1/machines/{machine_id}/remote-access"): "org_admin",
+    ("PUT", "/api/v1/machines/{machine_id}/management"): "org_admin",
+    ("POST", "/api/v1/machines/{machine_id}/remote-access/grants"): "org_admin",
+    ("POST", "/api/v1/machines/{machine_id}/remote-access/grants/{grant_id}/revoke"): "org_admin",
+    # The appliance configuration, exactly as the table of docs/appliance.md, section 12.
+    ("GET", "/api/v1/appliance/catalog"): "org_viewer",
+    ("GET", "/api/v1/machines/{machine_id}/appliance"): "org_viewer",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/plugins/{plugin_id}"): "org_operator",
+    ("DELETE", "/api/v1/machines/{machine_id}/appliance/plugins/{plugin_id}"): "org_operator",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/schedules/{schedule_id}"): "org_operator",
+    ("DELETE", "/api/v1/machines/{machine_id}/appliance/schedules/{schedule_id}"): "org_operator",
+    ("POST", "/api/v1/machines/{machine_id}/appliance/jobs"): "org_operator",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/mode"): "org_admin",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/nas/{nas_id}"): "org_admin",
+    ("DELETE", "/api/v1/machines/{machine_id}/appliance/nas/{nas_id}"): "org_admin",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/vectorizer"): "org_admin",
+    ("DELETE", "/api/v1/machines/{machine_id}/appliance/vectorizer"): "org_admin",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/backup"): "org_admin",
+    ("DELETE", "/api/v1/machines/{machine_id}/appliance/backup"): "org_admin",
+    ("PUT", "/api/v1/machines/{machine_id}/appliance/update"): "org_admin",
+    ("POST", "/api/v1/machines/{machine_id}/appliance/install-update"): "org_admin",
+}
+
+
+def human_routes(app) -> list[tuple[str, str]]:
+    return [
+        (method, path)
+        for method, path in api_routes(app)
+        if (method, path) not in PUBLIC and route_kind(path) == "human" and path not in SELF_SERVICE
+    ]
+
+
+def check_owner_routes(app, client, headers, org_role: str) -> int:
+    """Call every human route as a user with ``org_role``. Returns how many were refused."""
+    assert set(OWNER_ROUTES) <= set(human_routes(app)), set(OWNER_ROUTES) - set(human_routes(app))
+    refused = 0
+    for method, path in human_routes(app):
+        r = call(client, method, path, headers=headers)
+        needed = OWNER_ROUTES.get((method, path))
+        if needed is not None and ORG_RANK[org_role] >= ORG_RANK[needed]:
+            # Let through by the role check. With the placeholder id and the
+            # empty body used here, what answers is the route itself.
+            assert r.status_code in (200, 201, 400, 404, 422), (
+                f"{org_role}: {method} {path}: {r.status_code} {r.text[:200]}"
+            )
+        else:
+            assert r.status_code == 403, f"{org_role} reached {method} {path}: {r.status_code} {r.text[:200]}"
+            assert r.json()["error"]["code"] == "forbidden", f"{method} {path}"
+            refused += 1
+    return refused
+
+
 def test_owner_role_cannot_use_any_mutating_or_staff_route(app, client, world):
-    """Owners cannot submit earnings, alter fees, record receipts or approve payouts."""
+    """Owners cannot submit earnings, alter fees, record receipts or approve payouts.
+
+    The caller here is an organisation's administrator, the most an owner's
+    user can be: what it reaches beyond reading is its own organisation.
+    """
     owner = world.owner()
     headers = world.auth(world.user("owner", owner))
-    owner_readable = {
-        "/api/v1/owners",
-        "/api/v1/owners/{owner_id}",
-        "/api/v1/machines",
-        "/api/v1/machines/{machine_id}",
-        "/api/v1/machines/{machine_id}/telemetry",
-        "/api/v1/machines/{machine_id}/operations",
-        "/api/v1/fee-schedules",
-        "/api/v1/earnings/buckets",
-        "/api/v1/earnings/buckets/{bucket_id}",
-        "/api/v1/owners/{owner_id}/balance",
-        "/api/v1/owners/{owner_id}/statement",
-        "/api/v1/owners/{owner_id}/payouts",
-        "/api/v1/owners/{owner_id}/beneficiary",
-        "/api/v1/payout-items",
-        "/api/v1/auth/me",
-    }
-    self_service = {"/api/v1/auth/logout", "/api/v1/auth/mfa/enroll", "/api/v1/auth/mfa/activate"}
-    for method, path in api_routes(app):
-        if (method, path) in PUBLIC or route_kind(path) != "human" or path in self_service:
-            continue
-        r = call(client, method, path, headers=headers)
-        if method == "GET" and path in owner_readable:
-            assert r.status_code in (200, 404), f"{method} {path}: {r.status_code}"
-        else:
-            assert r.status_code == 403, f"owner reached {method} {path}: {r.status_code} {r.text[:200]}"
+    assert check_owner_routes(app, client, headers, "org_admin") > 50
+
+
+@pytest.mark.parametrize("org_role", ["org_operator", "org_viewer"])
+def test_operators_and_viewers_reach_no_money_no_users_and_no_staff_route(app, client, world, org_role):
+    owner = world.owner()
+    headers = world.auth(world.user("owner", owner, org_role=org_role))
+    refused = check_owner_routes(app, client, headers, org_role)
+    assert refused > 60
+    # Spelled out for the routes that matter most: money and the organisation itself.
+    for path in ("/api/v1/earnings/buckets", f"/api/v1/owners/{owner.id}/balance", "/api/v1/org/users"):
+        assert client.get(path, headers=headers).status_code == 403, path
 
 
 def test_auditor_is_read_only(app, client, world):

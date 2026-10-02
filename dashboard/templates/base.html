@@ -18,7 +18,8 @@
     <a class="brand" href="/dashboard">HappyMining OS</a>
     <nav aria-label="Main">
       <a href="/dashboard">Overview</a>
-      <a href="/earnings">Earnings</a>
+      {% if role != "owner" or user.org_role == "org_admin" %}<a href="/earnings">Earnings</a>{% endif %}
+      {% if role == "owner" and user.org_role == "org_admin" %}<a href="/organisation">Organisation</a>{% endif %}
       {% if role in ("admin", "auditor") %}
         <a href="/admin/pairing">Pairing</a>
         <a href="/admin/provider">Provider</a>
@@ -26,10 +27,11 @@
         <a href="/admin/fees">Fees</a>
         <a href="/admin/settlements">Settlements</a>
         <a href="/admin/integrations">Integrations</a>
+        <a href="/admin/releases">Releases</a>
         <a href="/admin/audit">Audit</a>
       {% endif %}
     </nav>
-    <span class="who">{{ user.email }} · {{ role }}{% if user.is_demo %} · demo account{% endif %}</span>
+    <span class="who">{{ user.email }} · {{ role }}{% if user.org_role %} · {{ user.org_role | replace("org_", "") }}{% endif %}{% if user.is_demo %} · demo account{% endif %}</span>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button class="secondary" type="submit">Sign out</button>

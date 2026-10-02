@@ -14,7 +14,20 @@ The agent **observes and reports** to HappyMining's own API
 - if the HappyMining API is unreachable it buffers on disk and retries. Vast
   hosting is not affected.
 
+The package also carries the **appliance** (`docs/appliance.md`): a catalog
+of local AI plugins, a vectorizer that indexes NAS shares, encrypted
+backups and signed firmware updates. The unprivileged agent only relays: it
+reports the appliance state in its heartbeat, hands the desired-state
+document to the privileged helper, runs the schedules and downloads
+releases. Everything that needs root (Docker Compose for HappyMining's own
+plugins, NAS mounts, backups, `dpkg`) is done by the helper, each part only
+when its switch in `/etc/happymining/helper.conf` is on; every switch is off
+as packaged. No plugin runs while the machine is in `vast` mode. The
+appliance has **never run on a real machine** ("Not verified here").
+
 Version: `0.1.0` (single source of truth: `internal/version/version.go`).
+The tree with the appliance has not changed it yet; a release must (build
+with `HM_VERSION`, see "Build, test, package").
 Only the Go standard library is used; there is no third-party module.
 
 ## Binaries
@@ -22,8 +35,8 @@ Only the Go standard library is used; there is no third-party module.
 | Binary | Installed at | Runs as | What it does |
 |---|---|---|---|
 | `happymining-agent` | `/usr/bin` | user `happymining` (systemd, sandboxed) | Collects a sample every interval, spools it on disk, sends spooled samples oldest first (at most 100 per request and 256 KiB), deletes what the API acknowledged, handles typed operations. |
-| `happyminingctl` | `/usr/bin` | the operator (`sudo` for `pair`, `unpair`) | `identity init`, `pair`, `status`, `unpair`, `preflight`, `vast-enroll-help`, `version`. |
-| `hm-helper` | `/usr/lib/happymining/hm-helper` | root, socket-activated, one process per request | The only privileged code. Two actions: restart the Vast daemon, delayed reboot. Both disabled by default. |
+| `happyminingctl` | `/usr/bin` | the operator (`sudo` for `pair`, `unpair` and the appliance's local actions) | `identity init`, `pair`, `status`, `unpair`, `preflight`, `vast-enroll-help`, `version`, `appliance status\|secret set\|purge\|token`, `backup init\|restore`. |
+| `hm-helper` | `/usr/lib/happymining/hm-helper` | root: socket-activated, one process per request, and as the program of the appliance's oneshot units | The only privileged code. Restart of the Vast daemon and delayed reboot (both disabled by default), and the appliance actions (each behind its own switch, all off by default). |
 | `hm-simulator` | not packaged (`dist/bin`) | anyone | Simulates machines without NVIDIA hardware. Every sample is marked `"synthetic": true`. |
 
 ## Pairing procedure
@@ -96,10 +109,29 @@ are never followed, so the bearer token only ever goes to the configured URL.
 
 ### `/etc/happymining/helper.conf`
 
-Switches of the privileged helper: `ALLOW_RESTART_VAST_DAEMON=0|1`,
-`ALLOW_REBOOT=0|1`. Default and missing file: everything disabled. The helper
-refuses the file (and therefore every action) if it is not a regular file owned
-by root or if group or others can write it.
+Switches of the privileged helper, each `0` or `1`. Default and missing file:
+everything disabled. The helper refuses the file (and therefore every
+action) if it is a symbolic link, not a regular file owned by root, writable
+by group or others, or has an unknown key.
+
+| Key | Allows |
+|---|---|
+| `ALLOW_RESTART_VAST_DAEMON` | `systemctl restart vastai.service` on request (also needs `HM_OPS_ENABLED`) |
+| `ALLOW_REBOOT` | a delayed reboot on request (also needs `HM_OPS_ENABLED`) |
+| `ALLOW_PLUGINS` | starting and stopping the catalog plugins (Compose projects `hm-<id>`); `vectorize_sync` and `plugin_restart` jobs |
+| `ALLOW_NAS` | mounting the document's NAS entries under `/srv/happymining/nas/<id>` |
+| `ALLOW_BACKUP` | running backups |
+| `ALLOW_UPDATE` | installing signed releases of this package |
+| `ALLOW_UNPINNED_IMAGES` | starting a plugin whose image is not pinned to a verified digest |
+| `ALLOW_FOREIGN_CONTAINERS` | starting GPU plugins while containers HappyMining did not start are running |
+| `ALLOW_UPDATE_WITHOUT_ROLLBACK` | installing a release when no copy of the installed package is kept (`/var/lib/happymining-helper/packages/current.deb` missing) |
+
+With `ALLOW_PLUGINS` and `ALLOW_NAS` both off, desired-state documents are
+validated and stored but nothing is applied, except that a plugin HappyMining
+started earlier is stopped when the document no longer runs it (vast mode
+above all): stopping HappyMining's own plugins needs no switch, starting
+does. A Vast host should leave the appliance switches off. The packaged file
+explains each switch.
 
 ### State directory
 
@@ -110,7 +142,12 @@ by root or if group or others can write it.
 | `seq` | 0600 | Sequence counter, persisted before each number is used. |
 | `spool/` | 0750 | One file per unsent sample. |
 | `ops.journal` | 0600 | Append-only, fsynced journal of operation ids (replay protection). |
-| `agent-state.json` | 0600 | Status for `happyminingctl status`. No secret. |
+| `agent-state.json` | 0600 | Status for `happyminingctl status`. No secret. Also `machine_id` (backup archive names) and the last successful heartbeat with the agent version that made it (the update guard reads both; the helper never reads `credential.json`). |
+| `schedules.json` | 0600 | Last run and outcome of each appliance schedule. |
+| `updates/` | 0700 | Download of a firmware release (`.<file>.part` while it is written), handed to the helper. |
+
+The helper's own state is root-only, in `/var/lib/happymining-helper`
+(0700): `docs/appliance.md`, section 8.4.
 
 ## What the agent sends
 
@@ -129,6 +166,14 @@ shell, with a timeout and bounded output.
 Not collected, by design: process lists, container names, images or
 environment, paths inside container storage, command lines.
 
+Next to the samples, each heartbeat carries the `appliance` object
+(`docs/appliance.md`, section 6.1): the state the helper reports (states of
+HappyMining's own plugins, NAS mounts, secrets by name, index counters,
+backup and update state) plus the agent's schedule history, redacted,
+bounded to 64 KiB. It never holds a secret, a file name from a NAS or a
+renter's container. When the helper does not answer within 10 seconds, the
+object says `control: "unknown"` with the reason.
+
 ## Failure behaviour
 
 | Situation | Behaviour |
@@ -146,7 +191,7 @@ environment, paths inside container storage, command lines.
 
 ## Typed operations
 
-There is no remote shell. The agent accepts only the eight operation types of
+There is no remote shell. The agent accepts only the ten operation types of
 the protocol and enforces its own rules in this order: valid UUID id, replay
 check against the journal, valid nonce, known type, implemented type, strict
 parameters (unknown fields rejected), valid timestamps and not expired, enabled
@@ -157,6 +202,14 @@ locally. The id is written to the journal and fsynced before anything runs.
 | `refresh_inventory`, `collect_diagnostics`, `run_preflight`, `rotate_credential` | implemented, enabled | nothing |
 | `restart_vast_daemon`, `reboot` | implemented, **disabled** | `HM_OPS_ENABLED` in `agent.env` **and** the switch in `helper.conf` |
 | `run_benchmark`, `apply_hardware_profile` | always `rejected`: "not implemented in this agent version" | not available |
+| `appliance_run_job` | implemented, enabled | the helper switch of the job (`ALLOW_PLUGINS` or `ALLOW_BACKUP`); `update_check` runs in the agent and needs the update capability (`ALLOW_UPDATE`) |
+| `install_update` | implemented, enabled; runs in the background (`accepted`, then the final acknowledgement) | `ALLOW_UPDATE` in `helper.conf` |
+
+The two appliance types are enabled in the agent because they touch only
+HappyMining's own containers and package; the root-owned switches, all off
+as packaged, are their real gate. A final `succeeded` means started
+(`appliance_run_job`) or verified, staged and handed to the installation
+unit (`install_update`); the outcome is in the reported appliance state.
 
 `detail` and `result` are redacted and bounded (2000 characters, 64 KiB) before
 they are sent. Journal entries are pruned after 30 days, but never before the
@@ -179,11 +232,17 @@ keeps using the old credential and acknowledges `failed`.
 |---|---|---|
 | `happymining-agent` | no | User `happymining`, no login shell, no home, empty capability set. |
 | `happymining-firstboot.service` | no | Runs `happyminingctl identity init` as `happymining`, once. |
-| `hm-helper` (via `happymining-helper@.service`) | **yes** | Restarting a system service and scheduling a reboot need root. This is the only privileged HappyMining code. |
+| `hm-helper` (via `happymining-helper@.service`) | **yes** | Restarting a system service and scheduling a reboot need root, and so do the appliance's quick actions (reading root-only state, starting units). This is the only privileged HappyMining code. |
+| `hm-helper apply-stored` (`happymining-appliance-apply.service`) | **yes** | Mounting network shares and driving Docker Compose. |
+| `hm-helper run-job` (`happymining-appliance-job@.service`) | **yes** | Index runs, plugin restarts and backups (reading plugin volumes under `/var/lib/docker/volumes`). |
+| `hm-helper install-staged`, `update-guard` (`happymining-update-install.service`, `happymining-update-guard.service` and `.timer`) | **yes** | `dpkg -i` of a verified release, and the rollback. |
 | `happyminingctl pair` / `unpair` | run with `sudo` by a local operator | To write into `/var/lib/happymining`. New files are chowned to the owner of the state directory. |
-| maintainer scripts | yes (dpkg) | Create the system user and state directories, enable units. Nothing else. |
+| `happyminingctl appliance secret set`, `purge`, `token`, `backup init`, `restore` | run with `sudo` by a local operator | They execute `hm-helper` with a fixed argument list and the terminal attached. |
+| maintainer scripts | yes (dpkg) | Create the system user and the state directories (agent, helper, plugin data, NAS mount points), enable units. Nothing else. |
 
-No HappyMining component listens on a network port.
+Neither the agent nor the helper listens on a network port. The appliance's
+plugins do, inside their containers, published on `127.0.0.1` or on every
+address according to each plugin's `bind` setting.
 
 ### Privileged helper: a root socket instead of sudo
 
@@ -212,21 +271,61 @@ What bounds the helper:
 - the socket is reachable only by root and the `happymining` group, and the
   helper checks the peer uid with `SO_PEERCRED` (root or the `happymining`
   user);
-- one request per connection, at most 256 bytes, strict JSON (unknown fields
-  rejected), 5 s read deadline;
+- one request per connection, strict JSON (unknown fields and fields that do
+  not belong to the action rejected), 5 s read deadline; at most 256 bytes,
+  except `appliance-apply` (96 KiB) and `update-install` (32 KiB); the
+  response at most 256 KiB;
 - two actions with fixed validation: `restart-vast-daemon` (no argument) and
   `reboot` with `delay_s` between 60 and 3600;
+- four appliance actions, quick by design (they read and write files under
+  `/var/lib/happymining-helper` and start a unit; they never run Docker,
+  mount, a backup or dpkg themselves): `appliance-status`,
+  `appliance-apply`, `appliance-run-job`, `update-install`. Their switches,
+  limits and results: `docs/appliance.md`, section 8.2;
 - fixed command lines, absolute paths, argv arrays, no shell:
   `/usr/bin/systemctl restart vastai.service` and
   `/usr/sbin/shutdown -r +M <fixed message>` (M is the delay rounded **up** to
   whole minutes; cancel with `shutdown -c`);
 - each action refused unless its switch is set in the root-owned
-  `helper.conf`; the paths of that file and of the commands are compiled in;
+  `helper.conf` (`appliance-status`, which only reads, needs none); the
+  paths of that file and of the commands are compiled in;
 - every request, refusal and result is logged to the journal (stderr of the
   unit) or to syslog facility `authpriv` when run by hand.
 
 Root can also run `hm-helper restart-vast-daemon` or
 `hm-helper reboot --delay-s N` directly; the same switches apply.
+
+The appliance's heavy work runs in separate oneshot units without an
+`[Install]` section, started only by the helper with
+`/usr/bin/systemctl start --no-block <unit>`:
+
+| Unit | Runs | Notes |
+|---|---|---|
+| `happymining-appliance-apply.service` | `hm-helper apply-stored` | No file-system namespace on purpose (the NAS mounts must reach the host); `NoNewPrivileges`, a capability bounding set for the mount helpers, `@system-service @mount`, 3 h limit. |
+| `happymining-appliance-job@.service` | `hm-helper run-job %i` (`vectorize_sync`, `backup_run`, `status_refresh`, `plugin_restart-<id>`) | `ProtectSystem=strict`, writable only the helper state and the NAS mount points; lowest I/O priority; 13 h limit. |
+| `happymining-update-install.service` | `hm-helper install-staged` | Wide (dpkg writes the system), `KillMode=process` so that a running dpkg is never killed. |
+| `happymining-update-guard.timer` / `.service` | `hm-helper update-guard`, 10 minutes after an installation | Same sandbox as the install unit. |
+
+Root-only command-line actions, never reachable over the socket:
+`apply-stored`, `run-job <instance>`, `install-staged`, `update-guard` (for
+the units), `appliance-status`, `secret-set <name>`, `backup-init`,
+`backup-restore --from <file> [--to <dir>]`, `appliance-purge <plugin id>`,
+`vectorizer-token`. Every command the helper runs is a fixed argv with an
+absolute path (`docs/appliance.md`, section 8.5).
+
+### `happyminingctl appliance` and `backup`
+
+| Command | Does |
+|---|---|
+| `happyminingctl appliance status [--json]` | asks the helper socket for the appliance state (root or the agent's account) and adds the agent's schedule history |
+| `sudo happyminingctl appliance secret set <name>` | reads a secret on standard input and stores it sealed for this machine; only names the local profile refers to |
+| `sudo happyminingctl appliance purge <plugin id>` | deletes a removed, stopped plugin's data after the id is typed again |
+| `sudo happyminingctl appliance token [vectorizer]` | creates the vectorizer's bearer token if missing and prints it |
+| `sudo happyminingctl backup init` | creates the backup key and prints the recovery key once; refuses if a key exists |
+| `sudo happyminingctl backup restore --from <archive> [--to <directory>]` | asks for the recovery key and restores into a new directory |
+
+Without root, these say that `sudo` is needed. No secret passes through
+`happyminingctl`'s own memory or arguments.
 
 ### Sandbox of the agent unit
 
@@ -291,9 +390,17 @@ untrusted evidence for an operator, never as proof of identity.
   untrusted.
 - A compromised HappyMining API can send typed operations. By default that
   yields only read-only results; restart and reboot need the two local
-  switches.
-- A compromised agent process can talk to the helper socket. The helper still
-  only knows two actions, both disabled by default.
+  switches. With the appliance switches on it can also send desired-state
+  documents (any catalog plugin, NAS hosts of its choosing, stored secrets
+  pointed at other hosts: `docs/threat-model.md`, section 6).
+- A compromised agent process can talk to the helper socket. With the
+  appliance switches off the helper still only does two things, both
+  disabled by default. With them on, it can also hand the helper any
+  document that validates against the installed catalog (including a mode
+  change that the control plane's rental-protection gate would have
+  refused), start the appliance jobs, and offer a release that is properly
+  signed and newer. It cannot make the helper run anything else, install an
+  unsigned or older package, or open a secret.
 
 ## Preflight
 
@@ -409,34 +516,69 @@ single compressor thread in the `.deb`.
 
 `HM_DEB_MAINTAINER` sets the package's Maintainer field. The default is an
 explicit placeholder with an `.invalid` address: set it before a release.
+`HM_VERSION` overrides the version (default: `internal/version/version.go`).
+`HM_RELEASE_KEYS_DIR` is a directory whose `*.pub` files (base64 Ed25519
+public keys) are installed as the keys the machine trusts for firmware
+updates; without it no key is packaged, the build says so, and machines
+with that package refuse every update. The published test key of
+`appliance/testdata` is refused. `build-deb.sh` now fails, and removes the
+package, when the package scan fails (it used to report success).
 
 The package is not signed. Signing and the repository trust chain are outside
-this directory.
+this directory. Firmware releases are signed with `scripts/release-sign.py`
+(`docs/operations.md`, "Publishing a firmware release").
 
 ### Package content
 
 `/usr/bin/happymining-agent`, `/usr/bin/happyminingctl`,
-`/usr/lib/happymining/hm-helper`, four units in `/lib/systemd/system`
-(`happymining-agent.service`, `happymining-firstboot.service`,
-`happymining-helper.socket`, `happymining-helper@.service`), the conffiles
-`/etc/happymining/agent.env`, `/etc/happymining/helper.conf`,
-`/etc/update-motd.d/60-happymining`, `/etc/issue.d/happymining.issue`, and
-this README plus the device-policy example in
+`/usr/lib/happymining/hm-helper`, every unit of `packaging/systemd/` in
+`/lib/systemd/system` (`happymining-agent.service`,
+`happymining-firstboot.service`, `happymining-helper.socket`,
+`happymining-helper@.service`, `happymining-appliance-apply.service`,
+`happymining-appliance-job@.service`, `happymining-update-install.service`,
+`happymining-update-guard.service`, `happymining-update-guard.timer`), the
+conffiles `/etc/happymining/agent.env`, `/etc/happymining/helper.conf`,
+`/etc/update-motd.d/60-happymining`, `/etc/issue.d/happymining.issue`, the
+plugin catalog in `/usr/share/happymining/catalog/` (`plugin.json` and
+`compose.yaml` of each plugin), the vectorizer's build context in
+`/usr/share/happymining/vectorizer/` (sources, `Dockerfile`,
+`requirements.lock`, `.dockerignore`, `README.md`), the release keys in
+`/usr/share/happymining/release-keys/` (only from `HM_RELEASE_KEYS_DIR`),
+and this README plus the device-policy example in
 `/usr/share/doc/happymining-agent`.
 
 Maintainer scripts:
 
 - `postinst`: creates the system user and group `happymining` (no login shell,
-  no home), creates `/var/lib/happymining` and `spool` with mode 0750, enables
-  the units and, when systemd is running, starts them. It does not fail when
-  systemd is absent (chroot, image build). It never starts pairing, never
-  touches disks or partitions and never installs or removes a package.
-- `prerm`: stops the agent; on removal also disables the units.
+  no home), creates `/var/lib/happymining` and `spool` with mode 0750 and
+  `updates` with 0700, the helper's `/var/lib/happymining-helper` (0700
+  root), `/var/lib/happymining-plugins` and `/srv/happymining/nas` (0755
+  root), enables the units and, when systemd is running, starts them. It
+  does not fail when systemd is absent (chroot, image build). It never starts
+  pairing, never touches disks or partitions, never mounts anything and never
+  installs or removes a package. It creates `/var/lib/happymining` but never
+  touches anything inside it (the agent's account owns it and could have
+  planted a symbolic link there that a root `chown` would follow); the agent
+  creates `spool` and `updates` itself. It cannot place
+  `/var/lib/happymining-helper/packages/current.deb` (dpkg does not say which
+  file it installs): on a machine installed from the image the helper adopts
+  the installer's copy from `/var/cache/happymining`; after a manual
+  installation the first update needs `ALLOW_UPDATE_WITHOUT_ROLLBACK=1`
+  (`docs/appliance.md`, section 9).
+- `prerm`: stops the agent; on removal also disables the units and stops the
+  update guard timer (which would otherwise reinstall the previous package).
+  On upgrade the guard stays armed. Docker, the Vast host software, renter
+  workloads, the plugins and the NAS mounts are not touched.
 - `postrm`: on `purge` removes `/var/lib/happymining`. `remove` keeps it. The
-  system user is left in place.
-- Upgrades keep the credential, the spool and the journal.
+  system user is left in place. Even `purge` keeps the helper's state (with
+  the backup key), the plugins' data and `/srv/happymining`.
+- Upgrades keep the credential, the spool, the journal, the helper's keys
+  and the plugins' data.
 
 Depends: `adduser` only. No dependency on Docker, NVIDIA or Vast packages.
+The appliance needs Docker with the Compose plugin (and the NVIDIA container
+runtime for GPU plugins) and the CIFS and NFS mount helpers; the package
+does not depend on them and does not install them.
 
 Image builders: the package does not create the install identity at install
 time. Make sure `/var/lib/happymining/identity` and `credential.json` do not
@@ -466,6 +608,17 @@ dist/bin/hm-simulator --api-url https://api.example.test \
   plausible values, not measurements or vendor specifications.
 - From Go tests: `sim.Run(ctx, sim.Options{...})`.
 
+Appliance (on by default): `--appliance=false` makes the simulated agents
+send no appliance object, as an agent without the feature.
+`--appliance-capabilities` (default `plugins,nas,backup,update,docker`)
+sets what the synthetic helper reports; `--appliance-catalog` points at a
+catalog directory (default: the repository's `appliance/catalog` next to
+`dist/`, else the installed one). Each
+simulated machine has its own sealing key, validates the documents it
+receives with the real validator and reports the plugins running as the
+plan says. Nothing is started, mounted or installed, every detail says so,
+and it never claims to have installed a firmware release.
+
 `internal/testapi` is an in-memory fake of the device API used by the tests;
 `go run ./internal/testapi/cmd/hm-fakeapi` serves it on a loopback port for
 local end-to-end runs. It is not the real API and is not packaged.
@@ -476,8 +629,11 @@ real hardware.
 ## Not verified here
 
 This code was built and tested in a sandbox without NVIDIA hardware, without a
-running systemd and without a Docker daemon. The following has **not** been
-run and must be validated on a real machine before a pilot:
+running systemd and without a Docker daemon. On 2026-10-02, at the
+uncommitted state with the appliance, `go test ./... -count=1` exited 0: 26
+packages ok, 495 top-level tests passed (784 with subtests), 1 skipped; the
+engineers also ran the suite with `-race`. The following has **not** been run and must
+be validated on a real machine before a pilot:
 
 - **Real NVIDIA hardware**: `nvidia-smi` output of real drivers and GPU models
   (parsing is tested against written fixtures only), access to `/dev/nvidia*`
@@ -503,8 +659,19 @@ run and must be validated on a real machine before a pilot:
   `internal/testapi`, a fake written from the same protocol document. The
   built binaries are additionally run against the real API, on real
   PostgreSQL, by `tests/api/test_end_to_end_binaries.py` (pairing, heartbeats,
-  an API outage with buffering and recovery, revocation). No test runs the
-  agent against a deployed API over the internet.
+  an API outage with buffering and recovery, revocation). **That test has
+  not run against the binaries with the appliance** (the test database was
+  unavailable). No test runs the agent against a deployed API over the
+  internet.
+- **The appliance, all of it**: the helper's appliance actions and the five
+  new units never ran under systemd; the apply unit's capability set was
+  never tried with `mount.cifs` or `mount.nfs`; no Docker command, mount,
+  `umount` or `dpkg` was ever executed (each was asserted on as an argv
+  against an injected fake); no plugin image was pulled and the vectorizer
+  image was never built; the NVIDIA container runtime, a NAS, an S3 provider
+  and a real release were never used; the update guard and the rollback
+  never ran against a real `dpkg`. The new maintainer scripts never ran on a
+  real system.
 - **Preflight values**: read through a web-fetch tool on 2026-10-02 (see the
   table above); the Vast host setup guide itself could not be read.
 - Terminal handling of `happyminingctl pair` (echo off, Ctrl-C restore) was not

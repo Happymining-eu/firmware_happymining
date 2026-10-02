@@ -6,12 +6,17 @@ Installed-Size: @INSTALLED_SIZE@
 Depends: adduser
 Section: admin
 Priority: optional
-Description: HappyMining monitoring agent for GPU hosts
+Description: HappyMining agent and appliance firmware for GPU hosts
  Unprivileged systemd agent that reports host telemetry (GPU, CPU, memory,
  disk space, service state) to the HappyMining API, with a local operator
- command (happyminingctl) and a narrowly scoped privileged helper whose two
- actions are disabled by default.
+ command (happyminingctl) and a narrowly scoped privileged helper.
  .
- The agent only observes and reports. It does not install, change or remove
- Docker, NVIDIA drivers or the Vast host software, it never talks to the Vast
- API and it never reads renter containers, files or processes.
+ The package also carries the appliance: the catalog of local AI plugins,
+ the vectorizer that indexes NAS shares, encrypted backups and signed
+ firmware updates. The helper does each of these only when its switch in
+ /etc/happymining/helper.conf is on; every switch is off by default. No
+ plugin runs while the machine is in Vast mode.
+ .
+ The agent does not install, change or remove Docker, NVIDIA drivers or the
+ Vast host software, it never talks to the Vast API and it never reads renter
+ containers, files or processes.

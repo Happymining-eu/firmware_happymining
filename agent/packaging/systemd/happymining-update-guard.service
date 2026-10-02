@@ -1,0 +1,37 @@
+[Unit]
+Description=HappyMining: roll back a firmware release whose agent did not come back
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+# Started by happymining-update-guard.timer about 10 minutes after an
+# installation (and by the helper's status when a reboot lost the timer). It
+# keeps the release when the new agent has completed a heartbeat since dpkg
+# started; otherwise it reinstalls the previous package kept by the helper.
+# It never installs anything else. No [Install] section on purpose.
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/lib/happymining/hm-helper update-guard
+TimeoutStartSec=1h
+# When the unit is stopped or times out only hm-helper is signalled: a dpkg
+# that is running is left to finish rather than killed in the middle of an
+# unpack.
+KillMode=process
+
+# --- Sandbox ---------------------------------------------------------------
+# The same as happymining-update-install.service, for the same reasons: a
+# rollback runs dpkg -i, which writes the system and runs maintainer scripts.
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=1G
+TasksMax=256

@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "id": "assistant",
+  "version": "3",
+  "name": "Assistant (fixture)",
+  "summary": "An agent with a web page.",
+  "homepage": "https://example.invalid/assistant",
+  "license": "MIT",
+  "gpu": false,
+  "modes": [
+    "private_ai"
+  ],
+  "requires": [
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 18789,
+      "protocol": "http",
+      "ui": true
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "lan",
+        "localhost"
+      ],
+      "default": "lan"
+    },
+    "workers": {
+      "type": "int",
+      "label": "Workers",
+      "env": "HM_SET_WORKERS",
+      "min": 1,
+      "max": 8,
+      "default": 2
+    },
+    "telemetry": {
+      "type": "bool",
+      "label": "Send usage statistics",
+      "env": "HM_SET_TELEMETRY",
+      "default": false
+    },
+    "model": {
+      "type": "string",
+      "label": "Default model",
+      "env": "HM_SET_MODEL",
+      "max_len": 100,
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,80}(:[A-Za-z0-9._-]{1,40})?$",
+      "default": "hermes3:8b"
+    }
+  },
+  "secrets": [
+    {
+      "key": "api_key",
+      "env": "ASSISTANT_API_KEY",
+      "label": "Cloud API key",
+      "required": false
+    }
+  ],
+  "images": [
+    {
+      "ref": "ghcr.io/example/assistant:3.0.0",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "data",
+      "backup": "always"
+    }
+  ],
+  "post_start": []
+}

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/appliance"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/protocol"
 )
 
@@ -80,9 +81,20 @@ type device struct {
 	synthetic     int
 	heartbeats    []HeartbeatRecord
 	pending       []protocol.Operation
-	final         map[string]string
-	acks          []AckRecord
-	rotations     int
+	// accepted holds pending operations acknowledged "accepted": like the
+	// real server, they are not sent again but still take a final status.
+	accepted  map[string]bool
+	final     map[string]string
+	acks      []AckRecord
+	rotations int
+	// The appliance (docs/appliance.md, section 6).
+	applianceRevision int64
+	applianceDocument json.RawMessage
+	applianceReports  []json.RawMessage
+	documentsSent     []int64
+	updateOffer       *protocol.UpdateResponse
+	updateRequests    int
+	artifactRequests  []string
 }
 
 // Server is the fake API. All methods are safe for concurrent use.
@@ -97,11 +109,15 @@ type Server struct {
 	authHeaders []string
 	// RefuseSynthetic makes the server reject synthetic samples (LIVE mode).
 	RefuseSynthetic bool
+	// artifacts holds release packages by version; artifactHandler, if set,
+	// answers the artifact route instead (fault injection).
+	artifacts       map[string][]byte
+	artifactHandler http.HandlerFunc
 }
 
 // New returns an empty server.
 func New() *Server {
-	return &Server{now: time.Now, enrollments: map[string]*enrollment{}, devices: map[string]*device{}}
+	return &Server{now: time.Now, enrollments: map[string]*enrollment{}, devices: map[string]*device{}, artifacts: map[string][]byte{}}
 }
 
 func randomBytes(n int) []byte {
@@ -206,6 +222,25 @@ type DeviceSnapshot struct {
 	PendingOps      int
 	FinalOperations map[string]string
 	Rotations       int
+	// ApplianceReports are the appliance objects received, oldest first.
+	ApplianceReports []json.RawMessage
+	// DocumentsSent lists the revision of every document sent in a response.
+	DocumentsSent    []int64
+	UpdateRequests   int
+	ArtifactRequests []string
+}
+
+// LastAppliance returns the last appliance object received, decoded (ok is
+// false when none was received).
+func (d DeviceSnapshot) LastAppliance() (appliance.Reported, bool) {
+	if len(d.ApplianceReports) == 0 {
+		return appliance.Reported{}, false
+	}
+	var r appliance.Reported
+	if err := json.Unmarshal(d.ApplianceReports[len(d.ApplianceReports)-1], &r); err != nil {
+		return appliance.Reported{}, false
+	}
+	return r, true
 }
 
 // Device returns a snapshot of one device (ok is false if unknown).
@@ -230,7 +265,56 @@ func (s *Server) Device(deviceID string) (DeviceSnapshot, bool) {
 	}
 	snap.Heartbeats = append(snap.Heartbeats, d.heartbeats...)
 	snap.Acks = append(snap.Acks, d.acks...)
+	snap.ApplianceReports = append(snap.ApplianceReports, d.applianceReports...)
+	snap.DocumentsSent = append(snap.DocumentsSent, d.documentsSent...)
+	snap.UpdateRequests = d.updateRequests
+	snap.ArtifactRequests = append(snap.ArtifactRequests, d.artifactRequests...)
 	return snap, true
+}
+
+// SetApplianceDocument stores the desired-state document of a device (a
+// complete section 4 document with "revision" and "secrets"). The revision of
+// the response is the document's. It returns false for an unknown device or
+// a document without a positive integer revision.
+func (s *Server) SetApplianceDocument(deviceID string, document json.RawMessage) bool {
+	var head struct {
+		Revision int64 `json:"revision"`
+	}
+	if json.Unmarshal(document, &head) != nil || head.Revision < 1 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.devices[deviceID]
+	if d == nil {
+		return false
+	}
+	d.applianceRevision, d.applianceDocument = head.Revision, append(json.RawMessage(nil), document...)
+	return true
+}
+
+// SetUpdateOffer sets what GET /api/v1/device/update answers to a device.
+func (s *Server) SetUpdateOffer(deviceID string, offer protocol.UpdateResponse) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d := s.devices[deviceID]; d != nil {
+		d.updateOffer = &offer
+	}
+}
+
+// AddArtifact makes a release package downloadable.
+func (s *Server) AddArtifact(version string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.artifacts[version] = append([]byte(nil), data...)
+}
+
+// SetArtifactHandler answers the artifact route with h (after authentication)
+// instead of the stored packages; nil restores the normal behaviour.
+func (s *Server) SetArtifactHandler(h http.HandlerFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.artifactHandler = h
 }
 
 // DeviceIDs lists the enrolled devices.
@@ -306,6 +390,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+protocol.PathOperations+"/{id}/ack", s.auth(s.handleAck))
 	mux.HandleFunc("POST "+protocol.PathRotate, s.auth(s.handleRotate))
 	mux.HandleFunc("GET "+protocol.PathSelf, s.auth(s.handleSelf))
+	mux.HandleFunc("GET "+protocol.PathUpdate, s.auth(s.handleUpdate))
+	mux.HandleFunc("GET "+protocol.PathUpdateArtifact+"/{version}", s.auth(s.handleArtifact))
 	mux.HandleFunc("GET /_test/summary", s.handleSummary)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -425,6 +511,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *devi
 		BootID       string            `json:"boot_id"`
 		AgentVersion string            `json:"agent_version"`
 		Samples      []json.RawMessage `json:"samples"`
+		Appliance    json.RawMessage   `json:"appliance"`
 	}
 	if err := strictDecode(data, &req); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, protocol.CodeInvalidRequest, "Invalid request.")
@@ -434,6 +521,15 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *devi
 		len(req.Samples) < 1 || len(req.Samples) > protocol.MaxSamplesPerRequest {
 		writeError(w, http.StatusUnprocessableEntity, protocol.CodeInvalidRequest, "Invalid request.")
 		return
+	}
+	var reported *appliance.Reported
+	if len(req.Appliance) > 0 && string(req.Appliance) != "null" {
+		r, err := ValidateAppliance(req.Appliance)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, protocol.CodeInvalidRequest, "Invalid appliance object: "+err.Error())
+			return
+		}
+		reported = r
 	}
 	samples := make([]protocol.Sample, len(req.Samples))
 	var last uint64
@@ -470,6 +566,20 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *devi
 		rec.Accepted++
 	}
 	d.heartbeats = append(d.heartbeats, rec)
+	// Section 6.2: only an agent that sent an appliance object hears about it,
+	// and only once the cloud has a revision. The document goes along while
+	// the machine has not applied that revision, never under local control.
+	var applianceOut *protocol.ApplianceResponse
+	if reported != nil {
+		d.applianceReports = append(d.applianceReports, append(json.RawMessage(nil), req.Appliance...))
+		if d.applianceRevision >= 1 {
+			applianceOut = &protocol.ApplianceResponse{Revision: d.applianceRevision}
+			if reported.Control != appliance.ControlLocal && reported.AppliedRevision != d.applianceRevision {
+				applianceOut.Document = d.applianceDocument
+				d.documentsSent = append(d.documentsSent, d.applianceRevision)
+			}
+		}
+	}
 
 	switch {
 	case fault != nil && fault.ProcessThenFail:
@@ -501,8 +611,61 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *devi
 	writeJSON(w, http.StatusOK, protocol.HeartbeatResponse{
 		Accepted: rec.Accepted, Duplicates: rec.Duplicates, HighestSeq: d.highest,
 		ServerTime: protocol.FormatTime(s.now()), NextIntervalS: 60,
-		Operations: append([]protocol.Operation{}, d.pending...),
+		Operations: d.deliverable(),
+		Appliance:  applianceOut,
 	})
+}
+
+// ValidateAppliance strictly decodes the appliance object of a heartbeat
+// (docs/appliance.md, section 6.1): exactly the contract's keys, schema 1,
+// and already within the contract's bounds (sanitising it again changes
+// nothing), which is what the agent promises to send.
+func ValidateAppliance(raw json.RawMessage) (*appliance.Reported, error) {
+	var r appliance.Reported
+	if err := strictDecode(raw, &r); err != nil {
+		return nil, fmt.Errorf("not the contract's object: %v", err)
+	}
+	if r.Schema != appliance.DocumentSchema {
+		return nil, fmt.Errorf("schema must be %d", appliance.DocumentSchema)
+	}
+	if r.Catalog == nil || r.Plugins == nil || r.NAS == nil || r.Secrets == nil || r.Schedules == nil {
+		return nil, fmt.Errorf("lists must be present (empty, not null)")
+	}
+	clean := r
+	clean.Sanitize()
+	a, _ := json.Marshal(r)
+	b, _ := json.Marshal(clean)
+	if !bytes.Equal(a, b) {
+		return nil, fmt.Errorf("not sanitised: %s", b)
+	}
+	return &r, nil
+}
+
+func (s *Server) handleUpdate(w http.ResponseWriter, _ *http.Request, d *device) {
+	d.updateRequests++
+	offer := protocol.UpdateResponse{Channel: "none", Policy: "manual"}
+	if d.updateOffer != nil {
+		offer = *d.updateOffer
+	}
+	writeJSON(w, http.StatusOK, offer)
+}
+
+func (s *Server) handleArtifact(w http.ResponseWriter, r *http.Request, d *device) {
+	version := r.PathValue("version")
+	d.artifactRequests = append(d.artifactRequests, version)
+	if s.artifactHandler != nil {
+		s.artifactHandler(w, r)
+		return
+	}
+	data, ok := s.artifacts[version]
+	if !ok || d.updateOffer == nil || d.updateOffer.Channel == "none" {
+		writeError(w, http.StatusNotFound, protocol.CodeNotFound, "No such release.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // ValidateSample strictly decodes one sample and enforces the protocol
@@ -554,8 +717,20 @@ func ValidateSample(raw json.RawMessage, out *protocol.Sample) error {
 	return nil
 }
 
+// deliverable returns the operations to send: pending ones that were not
+// acknowledged "accepted" yet.
+func (d *device) deliverable() []protocol.Operation {
+	out := []protocol.Operation{}
+	for _, op := range d.pending {
+		if !d.accepted[op.ID] {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
 func (s *Server) handleOperations(w http.ResponseWriter, _ *http.Request, d *device) {
-	writeJSON(w, http.StatusOK, protocol.OperationsResponse{Operations: append([]protocol.Operation{}, d.pending...)})
+	writeJSON(w, http.StatusOK, protocol.OperationsResponse{Operations: d.deliverable()})
 }
 
 func (s *Server) handleAck(w http.ResponseWriter, r *http.Request, d *device) {
@@ -612,6 +787,12 @@ func (s *Server) handleAck(w http.ResponseWriter, r *http.Request, d *device) {
 	if ack.Status != protocol.AckAccepted {
 		d.final[id] = ack.Status
 		d.pending = append(d.pending[:index], d.pending[index+1:]...)
+		delete(d.accepted, id)
+	} else {
+		if d.accepted == nil {
+			d.accepted = map[string]bool{}
+		}
+		d.accepted[id] = true
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "recorded"})
 }

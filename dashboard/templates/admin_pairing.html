@@ -23,9 +23,17 @@
     </select>
   </label>
   <label>Machine label <input name="machine_label" required maxlength="120" placeholder="rack-2-gpu-07"></label>
+  <label>Managed by
+    <select name="management" required>
+      <option value="company" selected>HappyMining (company)</option>
+      <option value="customer">the customer</option>
+    </select>
+  </label>
   <button type="submit">Create code</button>
 </form>
-<p class="note">The owner and the machine record are fixed here. The device cannot choose either.</p>
+<p class="note">The owner and the machine record are fixed here. The device cannot choose either.
+  On a machine managed by the customer, staff monitor it but need a remote-access grant from the owner's organisation
+  to change its configuration or request operations; afterwards only that organisation can hand it back to HappyMining.</p>
 {% endif %}
 
 <h2>Enrollment requests</h2>

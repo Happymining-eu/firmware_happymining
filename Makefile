@@ -27,7 +27,7 @@ DEMO_ENV = HM_MODE=demo HM_PROVIDER=fake \
 	HM_DEMO_LOGIN_ENABLED=true HM_COOKIE_SECURE=false HM_PAYOUTS_ENABLED=true HM_PAYOUT_PROVIDER=mock \
 	HM_PUBLIC_BASE_URL=http://127.0.0.1:$(PORT) HM_ALLOWED_HOSTS=127.0.0.1,localhost PYTHONPATH=$(ROOT)/api
 
-.PHONY: help setup dev demo test test-api test-os test-agent lint fmt build-agent build-installer \
+.PHONY: help setup dev demo test test-api test-os test-agent test-appliance lint fmt build-agent build-installer \
         smoke-test checksums dev-signing-key db-start db-stop compose-config lock-export clean
 
 help: ## Show this help
@@ -60,7 +60,7 @@ demo: $(PY) dist/bin/hm-simulator ## Run the seven-step acceptance demo end to e
 dist/bin/hm-simulator: $(shell find agent -name '*.go' 2>/dev/null) agent/go.mod
 	agent/scripts/build.sh
 
-test: test-agent test-api test-os ## Run every test suite
+test: test-agent test-api test-os test-appliance ## Run every test suite
 
 test-agent: ## Go agent tests (race detector on)
 	cd agent && go vet ./... && go test ./... -race -count=1
@@ -71,9 +71,13 @@ test-api: $(PY) dist/bin/hm-simulator ## API, ledger, security and end-to-end te
 test-os: $(PY) ## Installer and image tooling tests
 	$(PY) -m pytest tests/os
 
+test-appliance: $(PY) ## Plugin catalog rules, the vectorizer, browser sealing and panel templates (no database)
+	$(PY) -m pytest tests/appliance
+
 lint: $(PY) ## Static checks: ruff, gofmt, go vet, shellcheck, compose file
-	cd api && $(PY) -m ruff check happymining ../tests/api ../scripts ../migrations ../deploy ../integrations
-	cd api && $(PY) -m ruff format --check happymining ../migrations
+	cd api && $(PY) -m ruff check happymining ../tests/api ../tests/appliance ../tests/os/test_dev_postgres.py \
+	  ../tests/os/test_proxy_body_limits.py ../scripts ../migrations ../deploy ../integrations ../appliance
+	cd api && $(PY) -m ruff format --check happymining ../migrations ../appliance ../tests/appliance
 	@# The hash-pinned requirements used by deploy/hostinger must match the lockfile.
 	cd api && uv export --frozen --no-dev --no-emit-project --format requirements-txt -q \
 	  | grep -v '^ *#' | diff -q - <(grep -v '^ *#' requirements.lock.txt) >/dev/null \

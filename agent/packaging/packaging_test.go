@@ -6,10 +6,14 @@ package packaging
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -266,6 +270,14 @@ func TestConffileDefaultsAreSafe(t *testing.T) {
 	if helper.AllowReboot || helper.AllowRestartVastDaemon {
 		t.Fatalf("every helper switch must be off by default: %+v", helper)
 	}
+	// Whatever switches the helper has (the appliance added some), none is on
+	// in the packaged file.
+	v := reflect.ValueOf(helper)
+	for i := 0; i < v.NumField(); i++ {
+		if f := v.Field(i); f.Kind() == reflect.Bool && f.Bool() {
+			t.Errorf("helper switch %s is on in the packaged helper.conf", v.Type().Field(i).Name)
+		}
+	}
 
 	conffiles, _ := os.ReadFile("debian/conffiles")
 	for _, want := range []string{"/etc/happymining/agent.env", "/etc/happymining/helper.conf"} {
@@ -395,27 +407,41 @@ func TestPostinstFreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postinst must not fail when systemd cannot be used: %v\n%s", err, out)
 	}
-	for _, dir := range []string{"var/lib/happymining", "var/lib/happymining/spool"} {
+	for dir, mode := range map[string]os.FileMode{
+		"var/lib/happymining":         0o750,
+		"var/lib/happymining-helper":  0o700,
+		"var/lib/happymining-plugins": 0o700,
+		"srv/happymining":             0o755,
+		"srv/happymining/nas":         0o755,
+	} {
 		fi, err := os.Stat(filepath.Join(e.root, dir))
-		if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o750 {
-			t.Errorf("%s: %v %v", dir, fi, err)
+		if err != nil || !fi.IsDir() || fi.Mode().Perm() != mode {
+			t.Errorf("%s: %v %v, want mode %04o", dir, fi, err, mode)
 		}
 	}
 	calls := e.calls()
 	for _, want := range []string{
 		"addgroup --system happymining",
 		"adduser --system --ingroup happymining --no-create-home --home /nonexistent --shell /usr/sbin/nologin",
-		"chown happymining:happymining " + e.root + "/var/lib/happymining",
+		"chown happymining:happymining " + e.root + "/var/lib/happymining\n",
+		"chown root:root " + e.root + "/var/lib/happymining-helper " + e.root + "/var/lib/happymining-plugins " + e.root + "/srv/happymining " + e.root + "/srv/happymining/nas",
 		"systemctl enable happymining-firstboot.service happymining-helper.socket happymining-agent.service",
 	} {
 		if !strings.Contains(calls, want) {
 			t.Errorf("expected call %q in:\n%s", want, calls)
 		}
 	}
-	// It must not create an identity or a credential, and must not pair.
+	// It must not create an identity, a credential or anything else inside
+	// the agent's directory (the agent creates its spool and updates
+	// directories itself), and must not pair.
 	entries, _ := os.ReadDir(filepath.Join(e.root, "var/lib/happymining"))
-	if len(entries) != 1 || entries[0].Name() != "spool" {
+	if len(entries) != 0 {
 		t.Errorf("postinst created unexpected state: %v", entries)
+	}
+	for _, dir := range []string{"var/lib/happymining-helper", "var/lib/happymining-plugins", "srv/happymining/nas"} {
+		if entries, _ := os.ReadDir(filepath.Join(e.root, dir)); len(entries) != 0 {
+			t.Errorf("postinst put something into %s: %v", dir, entries)
+		}
 	}
 	if strings.Contains(calls, "pair") {
 		t.Errorf("postinst must never start pairing:\n%s", calls)
@@ -431,8 +457,48 @@ func TestPostinstWithoutSystemd(t *testing.T) {
 	if !strings.Contains(out, "not enabled") {
 		t.Errorf("the operator should be told that units were not enabled: %q", out)
 	}
-	if _, err := os.Stat(filepath.Join(e.root, "var/lib/happymining/spool")); err != nil {
+	if _, err := os.Stat(filepath.Join(e.root, "var/lib/happymining")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The agent account owns everything inside /var/lib/happymining and may have
+// replaced an entry with a symbolic link. A maintainer script runs as root:
+// a chown or chmod through such a link would give the agent any file on the
+// system (dpkg configures the package again at every firmware update).
+func TestPostinstNeverFollowsLinksTheAgentCouldPlant(t *testing.T) {
+	e := newScriptEnv(t, true)
+	state := filepath.Join(e.root, "var/lib/happymining")
+	if err := os.MkdirAll(state, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(e.root, "etc/happymining")
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"spool", "updates", "agent-state.json", "credential.json"} {
+		if err := os.Symlink(victim, filepath.Join(state, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := e.run("postinst", "configure"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if fi, err := os.Stat(victim); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Fatalf("the link's target was changed: %v %v", fi, err)
+	}
+	for _, line := range strings.Split(e.calls(), "\n") {
+		if strings.Contains(line, state+"/") {
+			t.Errorf("postinst acted on an entry inside the agent's directory: %q", line)
+		}
+	}
+	for _, name := range []string{"spool", "updates"} {
+		if fi, err := os.Lstat(filepath.Join(state, name)); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s was replaced: %v %v", name, fi, err)
+		}
 	}
 }
 
@@ -448,8 +514,15 @@ func TestUpgradePreservesCredentialsAndSpool(t *testing.T) {
 		"seq":                             "42\n",
 		"ops.journal":                     `{"id":"fixture"}` + "\n",
 		"spool/00000000000000000042.json": `{"seq":42}`,
+		"updates/happymining-agent_0.2.0_amd64.deb": "fixture-package",
+		"agent-state.json":                          `{"machine_id":"fixture"}`,
+		"schedules.json":                            `{"schedules":{}}`,
 	}
 	for name, content := range files {
+		// The agent created its own subdirectories while it ran.
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(state, name)), 0o750); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(state, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -484,6 +557,10 @@ func TestRemoveKeepsStateAndPurgeDeletesIt(t *testing.T) {
 	state := filepath.Join(e.root, "var/lib/happymining")
 	_ = os.WriteFile(filepath.Join(state, "credential.json"), []byte("x"), 0o600)
 	_ = os.MkdirAll(filepath.Join(e.root, "etc/happymining"), 0o755)
+	for _, kept := range []string{"var/lib/happymining-helper/backup.key", "var/lib/happymining-plugins/ollama/x", "srv/happymining/nas/docs/x"} {
+		_ = os.MkdirAll(filepath.Dir(filepath.Join(e.root, kept)), 0o755)
+		_ = os.WriteFile(filepath.Join(e.root, kept), []byte("fixture"), 0o600)
+	}
 	// A neighbour that purge must never touch.
 	neighbour := filepath.Join(e.root, "var/lib/vastai_kaalia")
 	_ = os.MkdirAll(neighbour, 0o755)
@@ -514,6 +591,13 @@ func TestRemoveKeepsStateAndPurgeDeletesIt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.root, "var/lib")); err != nil {
 		t.Fatal("purge removed too much")
+	}
+	// The appliance's keys and data stay: without the backup key no archive
+	// can be restored, and NAS shares may be mounted under /srv/happymining.
+	for _, kept := range []string{"var/lib/happymining-helper/backup.key", "var/lib/happymining-plugins/ollama/x", "srv/happymining/nas/docs/x"} {
+		if _, err := os.Stat(filepath.Join(e.root, kept)); err != nil {
+			t.Errorf("purge removed %s", kept)
+		}
 	}
 }
 
@@ -600,6 +684,39 @@ func debPath(t *testing.T) string {
 	return path
 }
 
+// Patterns of secrets in the built package. The package legitimately carries
+// the NAMES of secrets ("ai.answer.api_key" in the catalog, the vectorizer
+// and the binaries) and the words "PRIVATE KEY" (a PEM type in the binaries),
+// so what is looked for here is a value: a PEM private key block with its
+// content, an API key assigned a value, provider key formats.
+var debSecretPatterns = map[string]*regexp.Regexp{
+	"device credential": secretPatterns["device credential"],
+	"pairing code":      secretPatterns["pairing code"],
+	"private key":       regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----\s*[A-Za-z0-9+/=]{16}`),
+	"api key value":     regexp.MustCompile(`(?i)api[_-]?key["']?\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}`),
+	"provider key":      regexp.MustCompile(`\bsk-(ant-)?[A-Za-z0-9_\-]{20,}|\bAKIA[0-9A-Z]{16}\b`),
+}
+
+func TestDebSecretPatternsFindRealSecrets(t *testing.T) {
+	samples := map[string]string{
+		"private key":   "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg",
+		"api key value": `OPENAI_API_KEY=abcdefghijklmnopqrstuvwxyz012345`,
+		"provider key":  "token sk-ant-api03-abcdefghijklmnopqrstuvwxyz",
+	}
+	for name, sample := range samples {
+		if !debSecretPatterns[name].MatchString(sample) {
+			t.Errorf("%s: the pattern misses %q", name, sample)
+		}
+	}
+	for _, harmless := range []string{`"secret": "ai.answer.api_key"`, `- OPENAI_API_KEY`, `Type: "PRIVATE KEY"`, `env "QDRANT__SERVICE__API_KEY"`} {
+		for name, re := range debSecretPatterns {
+			if re.MatchString(harmless) {
+				t.Errorf("%s matches the harmless %q", name, harmless)
+			}
+		}
+	}
+}
+
 func TestDebContentsHaveNoSecretsAndNoDockerSocket(t *testing.T) {
 	deb := debPath(t)
 	dir := t.TempDir()
@@ -620,7 +737,7 @@ func TestDebContentsHaveNoSecretsAndNoDockerSocket(t *testing.T) {
 			return err
 		}
 		rel := strings.TrimPrefix(path, dir)
-		for name, re := range secretPatterns {
+		for name, re := range debSecretPatterns {
 			if loc := re.FindIndex(data); loc != nil {
 				t.Errorf("%s contains something that looks like a %s", rel, name)
 			}
@@ -633,7 +750,7 @@ func TestDebContentsHaveNoSecretsAndNoDockerSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files < 14 {
+	if files < 30 {
 		t.Fatalf("only %d files in the package", files)
 	}
 	// State that must only ever be created on the machine itself.
@@ -674,6 +791,9 @@ func TestDebLayoutOwnersAndModes(t *testing.T) {
 		"/etc/update-motd.d/60-happymining":                 "-rwxr-xr-x",
 		"/etc/issue.d/happymining.issue":                    "-rw-r--r--",
 		"/usr/share/doc/happymining-agent/README.md":        "-rw-r--r--",
+		"/usr/share/happymining/catalog/":                   "drwxr-xr-x",
+		"/usr/share/happymining/vectorizer/":                "drwxr-xr-x",
+		"/usr/share/happymining/release-keys/":              "drwxr-xr-x",
 	}
 	for path, mode := range want {
 		if modes[path] != mode {
@@ -741,5 +861,197 @@ func TestDebBinariesReportTheVersion(t *testing.T) {
 	}
 	if strings.Contains(string(out), "uid=") {
 		t.Fatalf("the helper executed an arbitrary command: %s", out)
+	}
+}
+
+// debEntries lists the package's paths (without the leading ".") and modes.
+func debEntries(t *testing.T, deb string) map[string]string {
+	t.Helper()
+	out, err := exec.Command("dpkg-deb", "--contents", deb).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dpkg-deb --contents: %v\n%s", err, out)
+	}
+	entries := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			t.Fatalf("unexpected line %q", line)
+		}
+		entries[strings.TrimPrefix(fields[5], ".")] = fields[0]
+	}
+	return entries
+}
+
+func TestDebInstallsEveryUnitFile(t *testing.T) {
+	deb := debPath(t)
+	entries := debEntries(t, deb)
+	units, err := filepath.Glob(filepath.Join("systemd", "*"))
+	if err != nil || len(units) < 4 {
+		t.Fatalf("unit files: %v %v", units, err)
+	}
+	for _, unit := range units {
+		path := "/lib/systemd/system/" + filepath.Base(unit)
+		if entries[path] != "-rw-r--r--" {
+			t.Errorf("%s is not in the package as a 0644 file (%q)", path, entries[path])
+		}
+	}
+	for path := range entries {
+		if strings.HasPrefix(path, "/lib/systemd/system/") && path != "/lib/systemd/system/" {
+			if _, err := os.Stat(filepath.Join("systemd", filepath.Base(path))); err != nil {
+				t.Errorf("%s is packaged but not in packaging/systemd", path)
+			}
+		}
+	}
+}
+
+// testReleaseKey is the published test key of appliance/testdata.
+func testReleaseKey(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("../../appliance/testdata/release-vector.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		PublicKey string `json:"public_key_b64"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil || len(v.PublicKey) != 44 {
+		t.Fatalf("test key: %v %q", err, v.PublicKey)
+	}
+	return v.PublicKey
+}
+
+func TestDebCarriesTheApplianceAndNoTestKey(t *testing.T) {
+	deb := debPath(t)
+	entries := debEntries(t, deb)
+
+	// The catalog: plugin.json and compose.yaml of each entry, nothing else.
+	plugins, _ := filepath.Glob("../../appliance/catalog/*/plugin.json")
+	if len(plugins) == 0 {
+		t.Fatal("no catalog in the repository")
+	}
+	want := map[string]bool{}
+	for _, p := range plugins {
+		id := filepath.Base(filepath.Dir(p))
+		for _, f := range []string{"plugin.json", "compose.yaml"} {
+			want["/usr/share/happymining/catalog/"+id+"/"+f] = true
+		}
+		if entries["/usr/share/happymining/catalog/"+id+"/"] != "drwxr-xr-x" {
+			t.Errorf("catalog directory %s: %q", id, entries["/usr/share/happymining/catalog/"+id+"/"])
+		}
+	}
+	// The vectorizer: its Python sources and everything its image build reads
+	// (the Dockerfile copies requirements.lock; .dockerignore keeps the
+	// context clean), plus the README.
+	err := filepath.Walk("../../appliance/vectorizer", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel("../../appliance/vectorizer", path)
+		switch {
+		case info.IsDir() && info.Name() == "__pycache__":
+			return filepath.SkipDir
+		case info.IsDir():
+		case strings.HasPrefix(rel, "hm_vectorizer/") && strings.HasSuffix(rel, ".py"), rel == "Dockerfile",
+			rel == "requirements.lock", rel == ".dockerignore", rel == "README.md":
+			want["/usr/share/happymining/vectorizer/"+rel] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"Dockerfile", "requirements.lock"} {
+		if !want["/usr/share/happymining/vectorizer/"+required] {
+			t.Errorf("appliance/vectorizer/%s is missing: the image cannot be built on the machine", required)
+		}
+	}
+	for path := range want {
+		if entries[path] != "-rw-r--r--" {
+			t.Errorf("%s is not in the package as a 0644 file (%q)", path, entries[path])
+		}
+	}
+	var unexpected []string
+	for path, mode := range entries {
+		if strings.HasPrefix(path, "/usr/share/happymining/catalog/") || strings.HasPrefix(path, "/usr/share/happymining/vectorizer/") {
+			if mode[0] == '-' && !want[path] {
+				unexpected = append(unexpected, path)
+			}
+			if strings.Contains(path, "__pycache__") || strings.HasSuffix(path, ".pyc") {
+				t.Errorf("compiled Python is packaged: %s", path)
+			}
+		}
+	}
+	sort.Strings(unexpected)
+	if len(unexpected) > 0 {
+		t.Errorf("unexpected files in the catalog or the vectorizer: %v", unexpected)
+	}
+
+	// Release keys: only *.pub files, and never the published test key,
+	// anywhere in the package, in any form.
+	for path, mode := range entries {
+		if strings.HasPrefix(path, "/usr/share/happymining/release-keys/") && mode[0] == '-' && !strings.HasSuffix(path, ".pub") {
+			t.Errorf("%s is not a key file", path)
+		}
+	}
+	if entries["/usr/share/happymining/release-keys/"] != "drwxr-xr-x" {
+		t.Errorf("release-keys directory: %q", entries["/usr/share/happymining/release-keys/"])
+	}
+	key := testReleaseKey(t)
+	rawKey, _ := base64Decode(key)
+	dir := t.TempDir()
+	if out, err := exec.Command("dpkg-deb", "--extract", deb, dir).CombinedOutput(); err != nil {
+		t.Fatalf("dpkg-deb --extract: %v\n%s", err, out)
+	}
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.Mode().IsRegular() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(key)) || bytes.Contains(data, rawKey) {
+			t.Errorf("%s contains the published TEST release key", strings.TrimPrefix(path, dir))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func base64Decode(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
+}
+
+func TestBuildScriptRefusesTheTestKey(t *testing.T) {
+	raw, err := os.ReadFile("../scripts/build-deb.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	for _, want := range []string{"HM_RELEASE_KEYS_DIR", "release-vector.json", "TEST key", `"$pkg_dir"/systemd/*`, "__pycache__"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("build-deb.sh lacks %q", want)
+		}
+	}
+}
+
+func TestPrermDisarmsTheUpdateGuardOnRemoveOnly(t *testing.T) {
+	raw, err := os.ReadFile("debian/prerm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	remove := text[strings.Index(text, "remove | deconfigure)"):strings.Index(text, "upgrade)")]
+	upgrade := text[strings.Index(text, "upgrade)"):]
+	if !strings.Contains(remove, "systemctl stop happymining-update-guard.timer") {
+		t.Error("prerm remove must disarm the update guard, which would otherwise reinstall the previous package")
+	}
+	if strings.Contains(upgrade, "update-guard") && !strings.Contains(upgrade, "# ") {
+		t.Error("prerm upgrade must leave the update guard armed")
+	}
+	if strings.Contains(strings.SplitN(upgrade, ";;", 2)[0], "systemctl stop happymining-update-guard") {
+		t.Error("prerm upgrade must leave the update guard armed")
 	}
 }

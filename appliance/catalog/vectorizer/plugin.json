@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "vectorizer",
+  "version": "1",
+  "name": "HappyMining Vectorizer",
+  "summary": "Indexes the files of the NAS shares chosen for it and answers searches over them. Every request needs the token created on the machine; whoever holds it can search everything that was indexed.",
+  "homepage": "https://github.com/Happymining-eu/firmware_happymining",
+  "license": "Proprietary",
+  "gpu": false,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [
+    "qdrant",
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "api",
+      "port": 8765,
+      "protocol": "http",
+      "ui": false
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "lan"
+    }
+  },
+  "secrets": [],
+  "images": [
+    {
+      "ref": "docker.io/library/python:3.12-slim-bookworm",
+      "digest": "sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e",
+      "verified": true
+    }
+  ],
+  "build": {
+    "context": "vectorizer",
+    "image": "happymining/vectorizer:1"
+  },
+  "volumes": [
+    {
+      "name": "state",
+      "backup": "always"
+    }
+  ],
+  "post_start": []
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -33,6 +34,9 @@ LATENCY = Histogram("hm_http_request_seconds", "HTTP request duration", ["method
 
 DEVICE_BODY_LIMIT = 256 * 1024
 DEFAULT_BODY_LIMIT = 1024 * 1024
+# The one route that takes a large body: the package of a firmware release,
+# uploaded by an admin (routers/releases.py). Its limit is HM_RELEASE_MAX_BYTES.
+RELEASE_ARTIFACT_PATH = re.compile(r"/api/v1/releases/[^/]+/artifact")
 
 DASHBOARD_DIR = Path(__file__).resolve().parents[2] / "dashboard"
 
@@ -44,19 +48,22 @@ def error_body(code: str, message: str) -> dict:
 class BodyLimitMiddleware:
     """Reject oversized request bodies before they are buffered."""
 
-    def __init__(self, app: ASGIApp):
+    def __init__(self, app: ASGIApp, release_max_bytes: int = DEFAULT_BODY_LIMIT):
         self.app = app
+        self.release_max_bytes = release_max_bytes
+
+    def limit_for(self, method: str, path: str) -> int:
+        if path.startswith(("/api/v1/device", "/api/v1/devices/enroll")):
+            return DEVICE_BODY_LIMIT
+        if method == "PUT" and RELEASE_ARTIFACT_PATH.fullmatch(path):
+            return self.release_max_bytes
+        return DEFAULT_BODY_LIMIT
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        path = scope.get("path", "")
-        limit = (
-            DEVICE_BODY_LIMIT
-            if path.startswith(("/api/v1/device", "/api/v1/devices/enroll"))
-            else DEFAULT_BODY_LIMIT
-        )
+        limit = self.limit_for(scope.get("method", ""), scope.get("path", ""))
         headers = dict(scope.get("headers") or [])
         declared = headers.get(b"content-length")
         if declared is not None and declared.isdigit() and int(declared) > limit:
@@ -164,7 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
-    app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(BodyLimitMiddleware, release_max_bytes=settings.release_max_bytes)
     if settings.cors_allowed_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -316,7 +323,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- routers -----------------------------------------------------------
 
     from .dashboard import router as dashboard_router
-    from .routers import auth, device, fleet, integration, money, provider
+    from .routers import appliance, auth, device, fleet, integration, money, org, provider, releases
 
     app.include_router(auth.router)
     app.include_router(device.router)
@@ -325,6 +332,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(money.router)
     app.include_router(integration.router)
     app.include_router(integration.admin_router)
+    app.include_router(appliance.router)
+    app.include_router(org.router)
+    app.include_router(releases.router)
     app.include_router(dashboard_router)
     static_dir = DASHBOARD_DIR / "static"
     if static_dir.is_dir():

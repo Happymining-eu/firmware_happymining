@@ -15,6 +15,12 @@ const (
 	PathOperations = "/api/v1/device/operations"
 	PathRotate     = "/api/v1/device/credential/rotate"
 	PathSelf       = "/api/v1/device/self"
+	// PathUpdate is GET /api/v1/device/update (docs/appliance.md, 6.6).
+	PathUpdate = "/api/v1/device/update"
+	// PathUpdateArtifact is followed by "/<version>": the package bytes of an
+	// offered release. The agent builds this path itself from a validated
+	// version; it never follows a path or URL it was sent.
+	PathUpdateArtifact = "/api/v1/device/update/artifact"
 )
 
 // Limits fixed by the contract.
@@ -62,6 +68,10 @@ const (
 	OpReboot               = "reboot"
 	OpRunBenchmark         = "run_benchmark"
 	OpApplyHardwareProfile = "apply_hardware_profile"
+	// OpApplianceRunJob and OpInstallUpdate are the appliance operations of
+	// docs/appliance.md, section 6.5.
+	OpApplianceRunJob = "appliance_run_job"
+	OpInstallUpdate   = "install_update"
 )
 
 // Acknowledgement statuses.
@@ -197,6 +207,10 @@ type HeartbeatRequest struct {
 	BootID       string            `json:"boot_id"`
 	AgentVersion string            `json:"agent_version"`
 	Samples      []json.RawMessage `json:"samples"`
+	// Appliance is the "appliance" object of docs/appliance.md, section 6.1,
+	// already encoded. It is omitted when the agent has nothing to send; the
+	// server then sends nothing about the appliance back (section 6).
+	Appliance json.RawMessage `json:"appliance,omitempty"`
 }
 
 // HeartbeatResponse is the 200 body of the heartbeat endpoint.
@@ -208,7 +222,51 @@ type HeartbeatResponse struct {
 	ServerTime    string      `json:"server_time"`
 	NextIntervalS int         `json:"next_interval_s"`
 	Operations    []Operation `json:"operations"`
+	// Appliance is present only when the request carried an appliance object
+	// and the cloud revision is at least 1 (section 6.2).
+	Appliance *ApplianceResponse `json:"appliance,omitempty"`
 }
+
+// ApplianceResponse is the "appliance" object of a heartbeat response.
+type ApplianceResponse struct {
+	// Revision is the cloud revision of the machine's desired-state document.
+	Revision int64 `json:"revision"`
+	// Document is the desired-state document (section 4, with "revision" and
+	// the sealed "secrets"). It is absent when the request's applied_revision
+	// equals Revision, and never sent to a machine under local control. It is
+	// kept as raw bytes: the agent does not interpret it, the helper validates it.
+	Document json.RawMessage `json:"document,omitempty"`
+}
+
+// UpdateWindow is the daily span in which an automatic update may install.
+type UpdateWindow struct {
+	StartHour int `json:"start_hour"`
+	EndHour   int `json:"end_hour"`
+}
+
+// UpdateRelease is the release offered to the machine in UpdateResponse.
+type UpdateRelease struct {
+	Version      string `json:"version"`
+	ManifestB64  string `json:"manifest_b64"`
+	SignatureB64 string `json:"signature_b64"`
+	Size         int64  `json:"size"`
+	SHA256       string `json:"sha256"`
+	ArtifactPath string `json:"artifact_path"`
+}
+
+// UpdateResponse is the 200 body of GET /api/v1/device/update (section 6.6).
+// Window is null when the cloud holds none; Release is null when there is
+// nothing newer for this machine.
+type UpdateResponse struct {
+	Channel string         `json:"channel"`
+	Policy  string         `json:"policy"`
+	Window  *UpdateWindow  `json:"window"`
+	Release *UpdateRelease `json:"release"`
+}
+
+// UpdateArtifactPath returns the artifact path of a release version. The
+// caller validates version first.
+func UpdateArtifactPath(version string) string { return PathUpdateArtifact + "/" + version }
 
 // Operation is a typed operation requested by the server.
 type Operation struct {

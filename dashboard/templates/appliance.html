@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% import "appliance_macros.html" as am %}
+{% block title %}Appliance · {{ machine.label }} · HappyMining OS{% endblock %}
+{% block content %}
+<p class="note"><a href="/machines/{{ machine.id }}">← {{ machine.label }}</a></p>
+<h1>Appliance of {{ machine.label }} {{ m.synthetic(machine.synthetic) }}</h1>
+<p class="lead">What this machine should run, as the cloud holds it, and what the machine last said it runs.
+  The machine checks everything again and keeps working without the cloud.</p>
+
+{% if a.local %}
+  <div class="flash err" role="status">This machine follows its own profile file (<span class="mono">control: local</span>):
+    it ignores the configuration held here, and the configuration cannot be changed from this page.
+    It is changed on the machine itself, in <span class="mono">/etc/happymining/appliance.json</span>, and its secrets with
+    <span class="mono">sudo happyminingctl appliance secret set &lt;name&gt;</span>. Jobs and firmware updates can still be requested.</div>
+{% endif %}
+{% if a.secrets_need_attention %}
+  <div class="flash err" role="alert">The machine cannot open some of its secrets (see <a href="#secrets">Secrets</a>):
+    they were sealed for another key, for instance before a reinstallation, or they are missing. Enter them again.</div>
+{% endif %}
+
+<div class="grid">
+  <div class="tile primary">
+    <div class="label">Mode</div>
+    <div class="value">{{ a.mode | replace("_", " ") }}</div>
+    <div class="sub">The machine reports: {% if a.reported.get("mode") %}{{ a.reported.get("mode") | replace("_", " ") }}{% else %}nothing yet{% endif %}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Configuration</div>
+    <div class="value">revision {{ a.revision }}</div>
+    <div class="sub">Applied by the machine: {{ a.applied_revision }}
+      {% if a.revision == 0 %}· nothing configured yet{% elif a.in_sync %}<span class="pill good">in sync</span>{% else %}<span class="pill stale">not in sync</span>{% endif %}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Managed by</div>
+    <div class="value">{% if a.management == "company" %}HappyMining{% else %}the customer{% endif %}</div>
+    <div class="sub">HappyMining's access: {{ a.staff_access }}{% if a.may_see_remote_access %} · <a href="/machines/{{ machine.id }}#remote-access">remote access</a>{% endif %}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Machine report</div>
+    <div class="value">{{ am.state(a.reported.get("apply_status")) }}</div>
+    <div class="sub">{% if a.reported_at %}Received {{ a.reported_at[:19] | replace("T", " ") }} UTC · control {{ a.control }}{% else %}The machine has not reported its appliance state yet{% endif %}</div>
+  </div>
+</div>
+{% if a.reported.get("apply_detail") %}<p class="note">{{ a.reported.get("apply_detail") }}</p>{% endif %}
+{% if a.management == "customer" %}
+  <p class="note">This machine is managed by the customer: HappyMining staff read or change this configuration only with a
+    remote-access grant from the organisation's administrators.</p>
+{% endif %}
+
+{# ------------------------------------------------------------------ mode #}
+<h2 id="mode">Mode</h2>
+<div class="two">
+  <dl class="kv panel">
+    {% for mode in a.modes %}
+      <dt>{{ mode | replace("_", " ") }}{% if mode == a.mode %} <span class="pill good">current</span>{% endif %}</dt>
+      <dd>{{ a.mode_help[mode] }}</dd>
+    {% endfor %}
+  </dl>
+  <div class="panel">
+    {% if a.provider_bound %}
+      <p><strong>This machine is bound to a provider machine on Vast.</strong> Leaving <span class="mono">vast</span> passes the
+        rental-protection gate: an unknown rental state blocks, and so does anything that could hurt a renter. Vast does not
+        expose the rental state today, so the gate blocks: first confirm in Vast's console that the machine is unlisted and
+        has no rental, have the provider binding removed, and only then change the mode. A refused attempt is recorded.</p>
+    {% else %}
+      <p class="note">This machine is not bound to a provider machine: the mode can be changed freely.</p>
+    {% endif %}
+    <p class="note">Going to <span class="mono">vast</span> is always accepted: plugins stop. HappyMining never lists or unlists the
+      machine on Vast; listing and pricing stay with the operator. Mode changes are never scheduled.</p>
+    {% if a.may_admin %}
+      <form class="row" method="post" action="/machines/{{ machine.id }}/appliance/mode">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        {{ am.revision(a) }}
+        <label>Change the mode to
+          <select name="mode">{% for mode in a.modes %}<option value="{{ mode }}" {% if mode == a.mode %}selected{% endif %}>{{ mode | replace("_", " ") }}</option>{% endfor %}</select></label>
+        <button type="submit">Change mode</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+{# --------------------------------------------------------------- plugins #}
+<h2 id="plugins">Plugins</h2>
+{% if a.mode == "vast" %}<p class="note">No plugin runs in <span class="mono">vast</span> mode, whatever is enabled here.</p>{% endif %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Plugin</th><th>Enabled</th><th>In this mode</th><th>State on the machine</th><th>On your network</th><th></th></tr></thead>
+    <tbody>
+    {% for p in a.plugins %}
+      <tr>
+        <td>{{ p.entry.name if p.entry else p.id }} <span class="note mono">{{ p.id }}</span>
+          {% if p.entry and p.entry.gpu %}<span class="pill">GPU</span>{% endif %}
+          {% if not p.entry %}<div class="note">Not in this control plane's catalog.</div>{% endif %}
+          {% if p.requires %}<div class="note">Needs {{ p.requires | join(", ") }}</div>{% endif %}</td>
+        <td>{% if p.enabled %}<span class="pill good">yes</span>{% else %}<span class="pill">no</span>{% endif %}</td>
+        <td>{% if p.runs_in_mode %}runs{% else %}<span class="note">does not run in {{ a.mode | replace("_", " ") }}</span>{% endif %}</td>
+        <td>{% if p.state %}{{ am.state(p.state.state) }}{% if p.state.version %} <span class="note">version {{ p.state.version }}</span>{% endif %}
+              {% if p.state.detail %}<div class="note wrap">{{ p.state.detail }}</div>{% endif %}
+              {% if p.state.ports %}<div class="note">published ports: {{ p.state.ports | join(", ") }}</div>{% endif %}
+            {% else %}{{ am.state(none) }}{% endif %}</td>
+        <td>{% for port in p.lan %}<div class="mono">{{ port.where }}</div><div class="note">{{ port.name }}{% if port.ui %} · web page{% endif %}</div>{% else %}<span class="note">—</span>{% endfor %}</td>
+        <td>
+          {% if a.may_operate %}
+            {% if p.restarted_by %}<span class="note">Restarted by {{ p.restarted_by | join(", ") }}</span>
+            {% else %}{{ am.remove_form(a, "/machines/" ~ machine.id ~ "/appliance/plugins/" ~ p.id ~ "/remove", "Remove", csrf) }}{% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="note">No plugin is configured.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">Plugins are reached on the owner's network only, never through HappyMining; the addresses above are a hint
+  built from the machine's host name. Removing a plugin stops it and keeps its data on the machine
+  (<span class="mono">sudo happyminingctl appliance purge &lt;id&gt;</span> deletes it, locally only).</p>
+
+{% if a.may_operate %}
+  {% for p in a.plugins %}{% if p.entry %}
+    <details class="edit">
+      <summary>Configure {{ p.entry.name }}</summary>
+      {{ am.plugin_form(a, p, csrf) }}
+    </details>
+  {% endif %}{% endfor %}
+  {% if a.available %}
+    <h3>Add a plugin</h3>
+    {% for p in a.available %}
+      <details class="edit">
+        <summary>{{ p.entry.name }} <span class="note">{{ p.entry.summary }}</span></summary>
+        <p class="note">Runs in: {{ p.entry.modes | join(", ") | replace("_", " ") }}{% if p.entry.gpu %} · uses the GPUs{% endif %}
+          {% if p.requires %} · needs {{ p.requires | join(", ") }}{% endif %}
+          {% if p.entry.license %} · licence {{ p.entry.license }}{% endif %}
+          {% if p.entry.homepage %} · {{ p.entry.homepage }}{% endif %}</p>
+        {% if p.entry.on_machine is false %}<p class="flash err">This machine's firmware does not have this plugin: update the machine first.</p>{% endif %}
+        {% if not p.entry.images_verified %}<p class="note">Its image is not pinned to a verified digest: the machine starts it only if its helper allows unpinned images.</p>{% endif %}
+        {{ am.plugin_form(a, p, csrf) }}
+      </details>
+    {% endfor %}
+  {% endif %}
+{% endif %}
+
+{# ------------------------------------------------------------------- NAS #}
+<h2 id="nas">NAS</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Id</th><th>Kind</th><th>Where</th><th>User</th><th>Access</th><th>Password</th><th>On the machine</th><th></th></tr></thead>
+    <tbody>
+    {% for n in a.nas %}
+      <tr>
+        <td class="mono">{{ n.id }}</td>
+        <td>{{ n.kind }}</td>
+        <td class="mono wrap">{{ n.host }}{% if n.kind == "smb" %}/{{ n.get("share", "") }}{% else %}:{{ n.get("export", "") }}{% endif %}{% if n.get("subpath") %}/{{ n.get("subpath") }}{% endif %}</td>
+        <td>{% if n.kind == "smb" %}{% if n.get("username") %}{{ n.get("username") }}{% if n.get("domain") %} <span class="note">({{ n.get("domain") }})</span>{% endif %}{% else %}<span class="note">guest</span>{% endif %}{% else %}<span class="note">—</span>{% endif %}</td>
+        <td>{{ n.access }}</td>
+        <td>{% if n.kind == "smb" and n.get("username") %}{% if n.secret_stored %}stored{% else %}<span class="pill bad">missing</span>{% endif %}{% if n.secret_state %} {{ am.state(n.secret_state) }}{% endif %}{% else %}<span class="note">—</span>{% endif %}</td>
+        <td>{% if n.state %}{{ am.state(n.state.state) }}{% if n.state.detail %}<div class="note wrap">{{ n.state.detail }}</div>{% endif %}{% else %}{{ am.state(none) }}{% endif %}</td>
+        <td>{% if a.may_admin %}{{ am.remove_form(a, "/machines/" ~ machine.id ~ "/appliance/nas/" ~ n.id ~ "/remove", "Remove", csrf) }}{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="note">No NAS entry is configured.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">A NAS entry is mounted on the machine at <span class="mono">/srv/happymining/nas/&lt;id&gt;</span>. Read entries can be
+  indexed; write entries can only receive backups.</p>
+{% if a.may_admin %}
+  {% for n in a.nas %}
+    <details class="edit">
+      <summary>Edit {{ n.id }}</summary>
+      {{ am.nas_form(a, n, csrf) }}
+    </details>
+  {% endfor %}
+  <details class="edit">
+    <summary>Add a NAS entry</summary>
+    {{ am.nas_form(a, none, csrf) }}
+  </details>
+{% endif %}
+
+{# ----------------------------------------------------------- vectorizer #}
+<h2 id="vectorizer">Vectorization</h2>
+{% set rv = a.reported_vectorizer %}
+<div class="two">
+  <div class="panel">
+    {% if a.vectorizer %}
+      {% set v = a.vectorizer %}
+      <dl class="kv">
+        <dt>Sources</dt><dd class="mono">{{ v.sources | join(", ") }}</dd>
+        <dt>File types</dt><dd class="mono">{{ v.extensions | join(", ") }}</dd>
+        <dt>Excluded</dt><dd class="mono">{{ v.exclude | join(", ") if v.exclude else "—" }}</dd>
+        <dt>Largest file</dt><dd>{{ v.max_file_mib }} MiB</dd>
+        <dt>Embedding model</dt><dd class="mono">{{ v.embedding_model }}</dd>
+        <dt>OCR</dt><dd>{{ "on (slow)" if v.ocr else "off" }}</dd>
+        <dt>Answers</dt><dd>{% if a.answer.provider == "none" %}search only{% elif a.answer.provider == "local" %}a model on this machine: <span class="mono">{{ a.answer.get("model", "") }}</span>{% else %}{{ a.answer.provider | replace("_", " ") }}: <span class="mono">{{ a.answer.get("model", "") }}</span>{% if a.answer.get("base_url") %} at <span class="mono">{{ a.answer.get("base_url") }}</span>{% endif %}{% endif %}</dd>
+      </dl>
+      {% if a.answer_cloud %}
+        <p class="flash err">Each question, and the passages found for it, are sent to {{ a.answer.provider | replace("_", " ") }}
+          with your own API key, from your machine. HappyMining is not in between.</p>
+      {% endif %}
+    {% else %}
+      <p class="note">Vectorization is not configured. The <span class="mono">vectorizer</span> plugin can be enabled only once it is.</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <dl class="kv">
+      <dt>State</dt><dd>{% if rv %}{{ am.state(rv.state) }}{% else %}{{ am.state(none) }}{% endif %}</dd>
+      {% if rv %}
+        <dt>Last run</dt><dd>{{ rv.last_run_at or "never" }}</dd>
+        <dt>Last success</dt><dd>{{ rv.last_ok_at or "never" }}</dd>
+        <dt>Files indexed</dt><dd>{{ rv.files_indexed if rv.files_indexed is not none else "n/a" }}</dd>
+        <dt>Files failed</dt><dd>{{ rv.files_failed if rv.files_failed is not none else "n/a" }}</dd>
+        <dt>Files skipped</dt><dd>{{ rv.files_skipped if rv.files_skipped is not none else "n/a" }}</dd>
+        <dt>Passages</dt><dd>{{ rv.chunks if rv.chunks is not none else "n/a" }}</dd>
+        {% if rv.detail %}<dt>Detail</dt><dd class="wrap">{{ rv.detail }}</dd>{% endif %}
+      {% endif %}
+    </dl>
+    <p class="note">The index does not copy the NAS's access rights: whoever holds the vectorizer's token can search everything
+      indexed. Index only shares meant for everyone who gets the token.</p>
+  </div>
+</div>
+{% if a.may_admin %}
+  {% set vf = a.vectorizer_form %}
+  {% set af = vf.answer %}
+  <details class="edit">
+    <summary>{% if a.vectorizer %}Change vectorization{% else %}Set up vectorization{% endif %}</summary>
+    <form class="stack wide" method="post" action="/machines/{{ machine.id }}/appliance/vectorizer" data-seal-key="{{ a.seal_key }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      {{ am.revision(a) }}
+      <fieldset class="scopes">
+        <legend>Sources (NAS entries with read access)</legend>
+        {% for id in a.nas_read %}
+          <label class="check"><input type="checkbox" name="sources" value="{{ id }}" {% if id in vf.sources %}checked{% endif %}> <span class="mono">{{ id }}</span></label>
+        {% else %}
+          <p class="note">Add a NAS entry with read access first.</p>
+        {% endfor %}
+      </fieldset>
+      <label>File types <span class="note">extensions, separated by commas</span>
+        <input name="extensions" value="{{ vf.extensions | join(', ') }}" spellcheck="false"></label>
+      <label>Exclude <span class="note">relative paths or folder names, one per line</span>
+        <textarea name="exclude" rows="3" spellcheck="false">{{ vf.exclude | join("\n") }}</textarea></label>
+      <div class="fields">
+        <label>Largest file (MiB) <input type="number" name="max_file_mib" min="1" max="2048" step="1" required value="{{ vf.max_file_mib }}"></label>
+        <label>Embedding model <input name="embedding_model" value="{{ vf.embedding_model }}" required maxlength="122" spellcheck="false"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="ocr" value="true" {% if vf.ocr %}checked{% endif %}> Read scanned pages and images (OCR, slow)</label>
+      <fieldset class="scopes">
+        <legend>Answers</legend>
+        <div class="fields">
+          <label>Answered by
+            <select name="answer_provider">
+              {% for p in a.answer_providers %}<option value="{{ p }}" {% if af.provider == p %}selected{% endif %}>{% if p == "none" %}nobody: search only{% elif p == "local" %}a model on this machine{% elif p == "openai_compatible" %}an OpenAI-compatible API{% else %}Anthropic{% endif %}</option>{% endfor %}
+            </select></label>
+          <label>Model <span class="note">not for search only</span>
+            <input name="answer_model" value="{{ af.get('model', '') }}" maxlength="100" spellcheck="false"></label>
+          <label>Base URL <span class="note">https://…; required for OpenAI-compatible, optional for Anthropic</span>
+            <input name="answer_base_url" value="{{ af.get('base_url', '') }}" maxlength="200" spellcheck="false"></label>
+        </div>
+        {{ am.secret_field(a, "API key (cloud providers only)", a.answer_secret_field, seal_name=a.answer_secret_name, stored=a.answer_secret_stored) }}
+        <p class="flash err">With a cloud provider (OpenAI-compatible or Anthropic), each question and the passages retrieved for it
+          are sent to that provider, with your key, from your machine.</p>
+      </fieldset>
+      {{ am.no_key_note(a) }}
+      {{ am.seal_error() }}
+      <div><button type="submit">Save vectorization</button></div>
+    </form>
+  </details>
+  {% if a.vectorizer %}{{ am.remove_form(a, "/machines/" ~ machine.id ~ "/appliance/vectorizer/remove", "Remove vectorization", csrf) }}{% endif %}
+{% endif %}
+
+{# ---------------------------------------------------------------- backup #}
+<h2 id="backup">Backup</h2>
+{% set rb = a.reported_backup %}
+<div class="two">
+  <div class="panel">
+    {% if a.backup %}
+      {% set b = a.backup %}
+      {% set d = b.destination %}
+      <dl class="kv">
+        <dt>Enabled</dt><dd>{{ "yes" if b.enabled else "no" }}</dd>
+        <dt>Destination</dt>
+        <dd class="mono wrap">{% if d.kind == "nas" %}NAS {{ d.nas_id }}{% if d.get("subpath") %}/{{ d.get("subpath") }}{% endif %}{% else %}{{ d.get("endpoint", "") }} · {{ d.get("bucket", "") }}/{{ d.get("prefix", "") }} ({{ d.get("region", "") }}){% endif %}</dd>
+        {% if d.kind == "s3" %}<dt>Access key id</dt><dd class="mono">{{ d.get("access_key_id", "") }}</dd>
+          <dt>Secret key</dt><dd>{% if a.s3_secret_stored %}stored{% else %}<span class="pill bad">missing</span>{% endif %}</dd>{% endif %}
+        <dt>Archives kept</dt><dd>{{ b.keep }}</dd>
+        <dt>Models</dt><dd>{{ "included" if b.include_models else "not included (they can be downloaded again)" }}</dd>
+      </dl>
+    {% else %}
+      <p class="note">No backup is configured.</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <dl class="kv">
+      <dt>State</dt><dd>{% if rb %}{{ am.state(rb.state) }}{% else %}{{ am.state(none) }}{% endif %}</dd>
+      {% if rb %}
+        <dt>Backup key</dt>
+        <dd>{% if rb.key_present %}present · key id <span class="mono">{{ rb.key_id or "?" }}</span>
+          {% else %}<span class="pill bad">no key</span>{% endif %}</dd>
+        <dt>Last success</dt><dd>{{ rb.last_ok_at or "never" }}</dd>
+        <dt>Last size</dt><dd>{% if rb.last_size_bytes is not none %}{{ rb.last_size_bytes }} bytes{% else %}n/a{% endif %}</dd>
+        {% if rb.detail %}<dt>Detail</dt><dd class="wrap">{{ rb.detail }}</dd>{% endif %}
+      {% endif %}
+    </dl>
+    {% if a.backup_key_missing %}
+      <p class="flash err">No key: run <span class="mono">sudo happyminingctl backup init</span> on the machine. It prints the recovery
+        key once; keep it safe.</p>
+    {% endif %}
+    <p class="note">The backup key is made on the machine and never leaves it. Without the recovery key nobody can restore a
+      backup, HappyMining included. Restoring is done on the machine (<span class="mono">sudo happyminingctl backup restore</span>).</p>
+  </div>
+</div>
+{% if a.may_admin %}
+  {% set bf = a.backup_form %}
+  {% set df = bf.destination %}
+  <details class="edit">
+    <summary>{% if a.backup %}Change the backup{% else %}Set up backups{% endif %}</summary>
+    <form class="stack wide" method="post" action="/machines/{{ machine.id }}/appliance/backup" data-seal-key="{{ a.seal_key }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      {{ am.revision(a) }}
+      <label class="check"><input type="checkbox" name="enabled" value="true" {% if bf.enabled %}checked{% endif %}> Enabled</label>
+      <label>Destination
+        <select name="destination_kind">
+          <option value="nas" {% if df.kind == "nas" %}selected{% endif %}>a NAS entry with write access</option>
+          <option value="s3" {% if df.kind == "s3" %}selected{% endif %}>an S3-compatible bucket</option>
+        </select></label>
+      <fieldset class="scopes">
+        <legend>NAS destination</legend>
+        <div class="fields">
+          <label>NAS entry
+            <select name="destination_nas_id"><option value="">—</option>{% for id in a.nas_write %}<option value="{{ id }}" {% if df.get("nas_id") == id %}selected{% endif %}>{{ id }}</option>{% endfor %}</select></label>
+          <label>Folder in it <input name="destination_subpath" value="{{ df.get('subpath', '') }}" maxlength="512" spellcheck="false"></label>
+        </div>
+        {% if not a.nas_write %}<p class="note">Add a NAS entry with write access first.</p>{% endif %}
+      </fieldset>
+      <fieldset class="scopes">
+        <legend>S3 destination</legend>
+        <div class="fields">
+          <label>Endpoint <span class="note">https://host[:port]</span><input name="endpoint" value="{{ df.get('endpoint', '') }}" maxlength="200" spellcheck="false"></label>
+          <label>Region <input name="region" value="{{ df.get('region', '') }}" maxlength="40" spellcheck="false"></label>
+          <label>Bucket <input name="bucket" value="{{ df.get('bucket', '') }}" maxlength="63" spellcheck="false"></label>
+          <label>Prefix <input name="prefix" value="{{ df.get('prefix', '') }}" maxlength="200" spellcheck="false"></label>
+          <label>Access key id <input name="access_key_id" value="{{ df.get('access_key_id', '') }}" maxlength="128" spellcheck="false" autocomplete="off"></label>
+        </div>
+        {{ am.secret_field(a, "Secret access key", a.s3_secret_field, seal_name=a.s3_secret_name, stored=a.s3_secret_stored) }}
+      </fieldset>
+      <div class="fields">
+        <label>Archives kept <input type="number" name="keep" min="1" max="365" step="1" required value="{{ bf.keep }}"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="include_models" value="true" {% if bf.include_models %}checked{% endif %}> Include model files (large; they can be downloaded again)</label>
+      {{ am.no_key_note(a) }}
+      {{ am.seal_error() }}
+      <div><button type="submit">Save the backup</button></div>
+    </form>
+  </details>
+  {% if a.backup %}{{ am.remove_form(a, "/machines/" ~ machine.id ~ "/appliance/backup/remove", "Remove the backup", csrf) }}{% endif %}
+{% endif %}
+
+{# ------------------------------------------------------------- schedules #}
+<h2 id="schedules">Schedules</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Id</th><th>Job</th><th>When (machine time)</th><th>Enabled</th><th>Last run</th><th>Next run</th><th></th></tr></thead>
+    <tbody>
+    {% for s in a.schedules %}
+      <tr>
+        <td class="mono">{{ s.id }}</td>
+        <td>{{ s.job | replace("_", " ") }}{% if s.get("plugin") %} <span class="mono">{{ s.get("plugin") }}</span>{% endif %}</td>
+        <td>{% if s.every == "hourly" %}every hour at :{{ "%02d" | format(s.minute) }}
+            {% elif s.every == "daily" %}every day at {{ "%02d:%02d" | format(s.get("hour", 0), s.minute) }}
+            {% else %}every {{ a.weekdays[s.get("weekday", 0)] }} at {{ "%02d:%02d" | format(s.get("hour", 0), s.minute) }}{% endif %}</td>
+        <td>{% if s.enabled %}yes{% else %}<span class="note">no</span>{% endif %}</td>
+        <td>{% if s.state %}{{ am.state(s.state.last_status) }} <span class="note">{{ s.state.last_run_at or "" }}</span>{% else %}{{ am.state(none) }}{% endif %}</td>
+        <td class="note">{{ s.state.next_run_at if s.state and s.state.next_run_at else "—" }}</td>
+        <td>{% if a.may_operate %}{{ am.remove_form(a, "/machines/" ~ machine.id ~ "/appliance/schedules/" ~ s.id ~ "/remove", "Remove", csrf) }}{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="note">No schedule is configured.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">A run missed while the machine was off is not caught up, and a job still running is not started again.
+  A job whose feature is not configured is recorded as skipped.</p>
+{% if a.may_operate %}
+  {% for s in a.schedules %}
+    <details class="edit">
+      <summary>Edit {{ s.id }}</summary>
+      {{ am.schedule_form(a, s, csrf) }}
+    </details>
+  {% endfor %}
+  <details class="edit">
+    <summary>Add a schedule</summary>
+    {{ am.schedule_form(a, none, csrf) }}
+  </details>
+{% endif %}
+
+{# --------------------------------------------------------------- updates #}
+<h2 id="updates">Firmware updates</h2>
+{% set ru = a.reported_update %}
+{% set up = a.update_policy %}
+<div class="two">
+  <div class="panel">
+    <dl class="kv">
+      <dt>Channel</dt><dd>{{ up.channel if up else "none" }}</dd>
+      <dt>Policy</dt><dd>{% if up %}{{ up.policy }}{% if up.get("window") %} · installs between {{ "%02d:00" | format(up.get("window").start_hour) }} and {{ "%02d:00" | format(up.get("window").end_hour) }} (machine time){% endif %}{% else %}manual{% endif %}</dd>
+    </dl>
+    <p class="note">This updates HappyMining's own software only: not the operating system, the kernel, the NVIDIA driver or
+      Vast's software. Every release is signed; the machine checks the signature, never downgrades, and rolls back if the new
+      agent does not report within 10 minutes.</p>
+  </div>
+  <div class="panel">
+    <dl class="kv">
+      <dt>Installed</dt><dd class="mono">{{ ru.current_version if ru and ru.current_version else (machine.agent_version or "unknown") }}</dd>
+      <dt>State</dt><dd>{% if ru %}{{ am.state(ru.state) }}{% if ru.target_version %} → <span class="mono">{{ ru.target_version }}</span>{% endif %}{% else %}{{ am.state(none) }}{% endif %}</dd>
+      {% if ru and ru.detail %}<dt>Detail</dt><dd class="wrap">{{ ru.detail }}</dd>{% endif %}
+    </dl>
+  </div>
+</div>
+{% if a.may_admin %}
+  {% set uf = a.update_form %}
+  <form class="row panel" method="post" action="/machines/{{ machine.id }}/appliance/update">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {{ am.revision(a) }}
+    <label>Channel
+      <select name="channel">{% for c in a.channels %}<option value="{{ c }}" {% if uf.channel == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+    <label>Policy
+      <select name="policy">{% for p in a.policies %}<option value="{{ p }}" {% if uf.policy == p %}selected{% endif %}>{{ "automatic, inside the window" if p == "auto" else "manual" }}</option>{% endfor %}</select></label>
+    <label>Window from (hour) <input type="number" name="start_hour" min="0" max="23" step="1" value="{{ uf.get('window', {}).get('start_hour', '') }}"></label>
+    <label>to (hour) <input type="number" name="end_hour" min="0" max="23" step="1" value="{{ uf.get('window', {}).get('end_hour', '') }}"></label>
+    <button type="submit">Save the update policy</button>
+  </form>
+  <p class="note">The window is required with the automatic policy; it may cross midnight.</p>
+{% endif %}
+{% if a.may_install %}
+  <form class="row" method="post" action="/machines/{{ machine.id }}/appliance/install-update">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Install the release <span class="note">MAJOR.MINOR.PATCH, published on this machine's channel</span>
+      <input name="version" required maxlength="24" spellcheck="false" placeholder="0.2.0"></label>
+    <button type="submit">Install this version</button>
+  </form>
+{% endif %}
+
+{# ------------------------------------------------------------------ jobs #}
+{% if a.may_run_jobs %}
+  <h2 id="jobs">Run a job now</h2>
+  <form class="row" method="post" action="/machines/{{ machine.id }}/appliance/jobs">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Job
+      <select name="job">{% for j in a.jobs %}<option value="{{ j }}">{{ j | replace("_", " ") }}: {{ a.job_help[j] }}</option>{% endfor %}</select></label>
+    <label>Plugin <span class="note">for plugin restart only</span>
+      <select name="plugin"><option value="">—</option>{% for p in a.plugins %}<option value="{{ p.id }}">{{ p.id }}</option>{% endfor %}</select></label>
+    <button type="submit">Run</button>
+  </form>
+  <p class="note">The job reaches the machine as a typed operation at its next heartbeat; its progress shows in the state above.
+    It touches HappyMining's own containers only.</p>
+{% endif %}
+
+{# --------------------------------------------------------------- secrets #}
+<h2 id="secrets">Secrets</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Name</th><th>Held by the cloud</th><th>The machine says</th></tr></thead>
+    <tbody>
+    {% for s in a.secrets %}
+      <tr>
+        <td class="mono">{{ s.name }}</td>
+        <td>{% if s.stored %}sealed{% else %}<span class="note">no</span>{% endif %}</td>
+        <td>{% if s.state %}{{ am.state(s.state) }}{% if s.state == "unreadable" %} <span class="note">does not open with this machine's key: enter it again</span>{% elif s.state == "missing" %} <span class="note">enter it again</span>{% endif %}{% else %}{{ am.state(none) }}{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="note">No secret is held for this machine.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">Secrets are sealed in your browser with the machine's own key ({% if a.seal_key %}<span class="mono wrap">{{ a.seal_key[:20] }}…</span>{% else %}not reported yet{% endif %})
+  and only their names are shown here. This protects them if the database, the logs or a backup leak, and from staff reading them;
+  it cannot protect against a control plane that was modified to serve a different page.</p>
+
+{% if a.capabilities %}
+  <p class="note">The machine's helper allows:
+    {% for name, on in a.capabilities | dictsort %}{{ name }} {% if on %}<span class="pill good">on</span>{% else %}<span class="pill">off</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
+
+{% if a.may_admin %}<script src="/static/seal.js" defer></script>{% endif %}
+{% endblock %}

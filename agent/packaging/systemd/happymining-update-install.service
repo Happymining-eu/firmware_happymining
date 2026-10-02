@@ -1,0 +1,44 @@
+[Unit]
+Description=HappyMining: install the verified, staged firmware release
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+# Started only by the privileged helper after update-install verified the
+# signed manifest and copied the package into its root-only directory. No
+# [Install] section on purpose.
+
+[Service]
+Type=oneshot
+# Root on purpose: it runs `dpkg -i` on the staged package, after verifying
+# signature, version and checksum again, keeps the installed package for a
+# rollback and arms happymining-update-guard.timer. Refused unless ALLOW_UPDATE
+# is on in /etc/happymining/helper.conf.
+User=root
+ExecStart=/usr/lib/happymining/hm-helper install-staged
+TimeoutStartSec=1h
+# When the unit is stopped or times out only hm-helper is signalled: a dpkg
+# that is running is left to finish rather than killed in the middle of an
+# unpack.
+KillMode=process
+
+# --- Sandbox ---------------------------------------------------------------
+# Relaxation: no ProtectSystem= and no CapabilityBoundingSet=: dpkg writes
+# /usr, /etc, /lib and /var/lib/dpkg, and the maintainer scripts (adduser,
+# systemctl) need much of root. A capability missing in the middle of an
+# unpack would leave a half-installed package, which is worse than the risk
+# it would remove.
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+# dpkg needs no network; AF_UNIX for systemd, AF_NETLINK for the audit records
+# of the account tools.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+MemoryMax=1G
+TasksMax=256

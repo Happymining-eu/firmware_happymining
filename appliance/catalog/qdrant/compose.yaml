@@ -1,0 +1,28 @@
+# Qdrant: vector database. See ../README.md for the sources.
+# HTTP on 6333; gRPC (6334) stays on the plugin network and is not published.
+# Storage and snapshots are ./storage and ./snapshots under the image's /qdrant.
+services:
+  qdrant:
+    image: docker.io/qdrant/qdrant:v1.19.1@sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: qdrant
+    environment:
+      - QDRANT__TELEMETRY_DISABLED=true
+      # Set only when the plugin secret exists; Qdrant treats an absent key as "no authentication".
+      - QDRANT__SERVICE__API_KEY
+    volumes:
+      - storage:/qdrant/storage
+      - snapshots:/qdrant/snapshots
+    ports:
+      - "${HM_BIND}:6333:6333"
+    networks:
+      - hm-appliance
+
+volumes:
+  storage:
+  snapshots:
+
+networks:
+  hm-appliance:
+    external: true

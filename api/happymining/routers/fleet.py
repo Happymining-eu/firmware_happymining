@@ -25,10 +25,11 @@ from ..errors import Conflict, NotFound
 from ..models import Device, EnrollmentRequest, Machine, Operation, Owner, TelemetrySample, User
 from ..providers.registry import get_provider
 from ..schemas import EnrollmentIn, OperationIn, OwnerIn, RevokeIn, TransferIn, UserIn
-from ..services import accounts, pairing
+from ..services import access, accounts, pairing, remote_access
 from ..services import devices as device_service
 from ..services import machines as machine_service
 from ..services import operations as operation_service
+from ..services import org as org_service
 from ..services.accounts import Principal
 from . import views
 from .auth import user_view
@@ -119,7 +120,11 @@ def deactivate_user(
     principal: Principal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Disable an account and end all of its sessions."""
+    """Disable an account and end all of its sessions.
+
+    An organisation keeps at least one active administrator, whoever asks.
+    """
+    org_service.guard_last_admin(db, user_id)
     user = accounts.deactivate_user(db, principal.actor(client_ip(request)), user_id)
     db.commit()
     return {"id": str(user.id), "is_active": user.is_active}
@@ -165,6 +170,15 @@ def create_enrollment(
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
 ):
+    if body.machine_id is not None:
+        # A new code for a machine that was paired before lets whoever holds it
+        # connect a device as that machine, and that device is then sent the
+        # machine's configuration. On a customer-managed machine that needs the
+        # organisation's consent, like any other change (a machine that never
+        # paired has nothing to protect yet).
+        existing = db.get(Machine, body.machine_id)
+        if existing is not None and existing.status != "pending_pairing":
+            access.require_manage(db, principal, existing)
     issued = pairing.create_enrollment(
         db,
         settings,
@@ -175,6 +189,7 @@ def create_enrollment(
         owned_since=body.owned_since,
         created_by=principal.user.id,
         is_synthetic=settings.is_demo,
+        management=body.management,
     )
     db.commit()
     return {
@@ -271,14 +286,20 @@ def transfer_ownership(
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
 ):
+    # Handing a customer-managed machine to another organisation gives that
+    # organisation its configuration: staff need the current owner's consent.
+    access.require_manage(db, principal, load_machine(db, principal, machine_id, lock=True))
+    actor = principal.actor(client_ip(request))
     machine = machine_service.transfer_ownership(
         db,
-        principal.actor(client_ip(request)),
+        actor,
         machine_id=machine_id,
         new_owner_id=body.new_owner_id,
         reason=body.reason,
         user_id=principal.user.id,
     )
+    # The previous owner's grants end here, and with them what was queued under them.
+    remote_access.close_grants_after_transfer(db, actor, machine, user_id=principal.user.id)
     db.commit()
     return views.machine_view(settings, machine, staff=True)
 
@@ -321,6 +342,8 @@ def request_operation(
     settings: Settings = Depends(settings_dep),
 ):
     machine = load_machine(db, principal, machine_id, lock=True)
+    # On a customer-managed machine staff need a remote-access grant (manage).
+    access.require_manage(db, principal, machine)
     try:
         provider = get_provider(settings)
     except Exception:
@@ -381,6 +404,11 @@ def cancel_operation(
     principal: Principal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    found = db.get(Operation, operation_id)
+    if found is None:
+        raise NotFound()
+    # Withdrawing a request is managing the machine too: same rule as requesting.
+    access.require_manage(db, principal, load_machine(db, principal, found.machine_id, lock=True))
     operation = operation_service.cancel(db, principal.actor(client_ip(request)), operation_id)
     db.commit()
     return views.operation_view(operation)

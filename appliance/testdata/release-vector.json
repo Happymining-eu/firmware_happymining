@@ -1,0 +1,9 @@
+{
+  "comment": "Test vector for signed release manifests (docs/appliance.md). TEST key, published on purpose.",
+  "private_seed_b64": "egRCCkOvN5Ee9PT/VhPO9xqucZw4txGYXsz4uZv0AUA=",
+  "public_key_b64": "gHPPGWpeVAtEETEw6EPbGEVXn56F7ba5C0P2+Sxm5pQ=",
+  "key_id": "a80fcacbc601106d",
+  "manifest_b64": "ewogICJzY2hlbWEiOiAxLAogICJwcm9kdWN0IjogImhhcHB5bWluaW5nLWFnZW50IiwKICAidmVyc2lvbiI6ICIwLjIuMCIsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0xMC0wMlQxMjowMDowMFoiLAogICJhcnRpZmFjdCI6IHsKICAgICJmaWxlbmFtZSI6ICJoYXBweW1pbmluZy1hZ2VudF8wLjIuMF9hbWQ2NC5kZWIiLAogICAgInNpemUiOiAxMSwKICAgICJzaGEyNTYiOiAiYjk0ZDI3Yjk5MzRkM2UwOGE1MmU1MmQ3ZGE3ZGFiZmFjNDg0ZWZlMzdhNTM4MGVlOTA4OGY3YWNlMmVmY2RlOSIKICB9LAogICJtaW5fdXBncmFkZV9mcm9tIjogIjAuMS4wIiwKICAibm90ZXMiOiAiVGVzdCByZWxlYXNlLiIKfQo=",
+  "signature_b64": "r3sh8G+vRAozI0hQqw9W6rNB/B3DO76TpIm2Rw40tD9g6qRcxPcItstJhJX13g7B5H4ROjqlCXwe8IALgubVDg==",
+  "artifact_b64": "aGVsbG8gd29ybGQ="
+}

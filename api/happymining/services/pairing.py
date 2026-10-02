@@ -23,6 +23,7 @@ from ..config import Settings
 from ..db import lock_row
 from ..errors import Conflict, InvalidRequest, NotFound, PairingFailed
 from ..models import (
+    MANAGEMENT_KINDS,
     Device,
     DeviceCredential,
     EnrollmentRequest,
@@ -60,6 +61,7 @@ def create_enrollment(
     machine_id: uuid.UUID | None = None,
     owned_since: date | None = None,
     is_synthetic: bool = False,
+    management: str | None = None,
 ) -> IssuedPairing:
     """Issue a pairing code, registering the machine record if it is new.
 
@@ -67,10 +69,18 @@ def create_enrollment(
     machine (default: today). An admin sets an earlier day when onboarding a
     machine that was already earning for the same owner; earnings for days
     before it are never attributed to them.
+
+    ``management`` says who manages a machine registered here: ``company``
+    (the default) or ``customer`` (docs/appliance.md, section 3). It is chosen
+    once, at creation. For an existing machine it can only repeat what the
+    machine already has: changing it has its own rules
+    (``services/remote_access.set_management``).
     """
     today = datetime.now(UTC).date()
     if owned_since is not None and owned_since > today:
         raise InvalidRequest("owned_since cannot be in the future")
+    if management is not None and management not in MANAGEMENT_KINDS:
+        raise InvalidRequest("management must be one of: " + ", ".join(MANAGEMENT_KINDS))
     owner = db.get(Owner, owner_id)
     if not owner or owner.status != "active":
         raise NotFound("owner not found")
@@ -80,12 +90,19 @@ def create_enrollment(
             raise NotFound("machine not found for this owner")
         if machine.device and machine.device.status == "active":
             raise Conflict("this machine already has an active device; revoke it first")
+        if management is not None and management != machine.management:
+            raise InvalidRequest(
+                f"this machine is managed by the {machine.management}; pairing does not change that"
+            )
     else:
         label = machine_label.strip()
         if not label:
             raise InvalidRequest("machine_label is required")
         machine = Machine(
-            owner_id=owner_id, label=label[:120], is_synthetic=is_synthetic or owner.is_synthetic
+            owner_id=owner_id,
+            label=label[:120],
+            is_synthetic=is_synthetic or owner.is_synthetic,
+            management=management or "company",
         )
         db.add(machine)
         db.flush()
@@ -135,7 +152,11 @@ def create_enrollment(
         object_type="enrollment_request",
         object_id=request.id,
         owner_id=owner_id,
-        details={"machine_id": str(machine.id), "expires_at": request.expires_at.isoformat()},
+        details={
+            "machine_id": str(machine.id),
+            "expires_at": request.expires_at.isoformat(),
+            "management": machine.management,
+        },
     )
     return IssuedPairing(request=request, machine=machine, code=code.display)
 

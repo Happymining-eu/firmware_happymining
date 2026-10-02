@@ -1,0 +1,20 @@
+{
+ "why": "empty username means guest: no secret",
+ "document": {
+  "schema": 1,
+  "revision": 1,
+  "mode": "private_ai",
+  "nas": [
+   {
+    "id": "pub",
+    "kind": "smb",
+    "host": "10.0.0.5",
+    "share": "Public Share",
+    "subpath": "a/b c",
+    "username": "",
+    "domain": "",
+    "access": "read"
+   }
+  ]
+ }
+}

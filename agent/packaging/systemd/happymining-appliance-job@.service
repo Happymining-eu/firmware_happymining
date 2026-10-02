@@ -1,0 +1,61 @@
+[Unit]
+Description=HappyMining appliance job %i
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+# Started only by the privileged helper; the instance is one of
+# vectorize_sync, backup_run, status_refresh or plugin_restart-<plugin id>, and
+# hm-helper refuses any other. No [Install] section on purpose.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root on purpose: it drives Docker Compose for HappyMining's own plugins and,
+# for a backup, reads their volumes under /var/lib/docker/volumes.
+User=root
+ExecStart=/usr/lib/happymining/hm-helper run-job %i
+# A vectorizer sync or a backup can run for hours; the helper bounds each
+# command too.
+TimeoutStartSec=13h
+UMask=0077
+# Backups compete with renters for the disks: lowest best-effort priority.
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Nice=10
+
+# --- Sandbox ---------------------------------------------------------------
+# A job mounts nothing, so it can have its own read-only view of the system.
+# NAS shares mounted on the host (by the apply unit) propagate into it.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Relaxation: the helper's state, and the NAS mount points (a backup writes
+# its archive to a share mounted read-write; "-" because the directory may
+# not exist yet).
+ReadWritePaths=/var/lib/happymining-helper -/srv/happymining/nas
+# The Docker CLI reads root's configuration but must not change it.
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+# Relaxation: CAP_DAC_READ_SEARCH and CAP_DAC_OVERRIDE to read plugin volumes
+# whose files belong to other users and the agent's agent-state.json (machine
+# id); CAP_FOWNER to create the archive on the share.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
+AmbientCapabilities=
+# Relaxation: AF_INET/AF_INET6/AF_NETLINK for backups to an S3 bucket.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=1G
+TasksMax=256

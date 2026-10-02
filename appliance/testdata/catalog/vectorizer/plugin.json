@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "vectorizer",
+  "version": "1",
+  "name": "Vectorizer (fixture)",
+  "summary": "Indexes the NAS.",
+  "homepage": "https://example.invalid/vectorizer",
+  "license": "Proprietary",
+  "gpu": false,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [
+    "qdrant",
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "api",
+      "port": 8765,
+      "protocol": "http",
+      "ui": true
+    }
+  ],
+  "settings": {},
+  "secrets": [],
+  "images": [
+    {
+      "ref": "docker.io/library/python:3.12-slim",
+      "digest": null,
+      "verified": false
+    }
+  ],
+  "build": {
+    "context": "vectorizer",
+    "image": "happymining/vectorizer:1"
+  },
+  "volumes": [
+    {
+      "name": "state",
+      "backup": "always"
+    }
+  ],
+  "post_start": []
+}

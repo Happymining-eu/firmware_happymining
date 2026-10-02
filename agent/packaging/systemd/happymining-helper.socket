@@ -1,5 +1,5 @@
 [Unit]
-Description=HappyMining privileged helper socket (both actions disabled by default)
+Description=HappyMining privileged helper socket (every privileged action disabled by default)
 Documentation=file:///usr/share/doc/happymining-agent/README.md
 
 [Socket]

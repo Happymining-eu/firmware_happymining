@@ -46,6 +46,7 @@ SCOPE_HELP: dict[str, str] = {
         "Still subject to the server switch, the rental-protection gate and the machine's own settings."
     ),
     "earnings:read": "Read reported and received earnings per machine and day.",
+    "appliance:read": "Read a machine's mode, plugins, indexing, backup and update state. Changes nothing.",
 }
 MAX_TTL_DAYS = 730
 # How often "last used" is written. Not on every request: it is a hint for

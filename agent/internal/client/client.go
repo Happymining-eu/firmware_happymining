@@ -87,6 +87,10 @@ type Options struct {
 type Client struct {
 	base string
 	hc   *http.Client
+	// dl downloads release packages: same transport and redirect policy as
+	// hc, but no overall timeout (a package is far larger than any JSON
+	// response); a download is bounded by its context and a stall timer.
+	dl *http.Client
 }
 
 // ValidateBaseURL enforces the transport policy on a base URL.
@@ -177,15 +181,13 @@ func New(opts Options) (*Client, error) {
 	if opts.WrapTransport != nil {
 		rt = opts.WrapTransport(rt)
 	}
+	// Never follow redirects: a bearer token must only ever go to the
+	// configured base URL.
+	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{
 		base: u.String(),
-		hc: &http.Client{
-			Transport: rt,
-			Timeout:   timeout,
-			// Never follow redirects: a bearer token must only ever go to
-			// the configured base URL.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+		hc:   &http.Client{Transport: rt, Timeout: timeout, CheckRedirect: noRedirect},
+		dl:   &http.Client{Transport: rt, CheckRedirect: noRedirect},
 	}, nil
 }
 

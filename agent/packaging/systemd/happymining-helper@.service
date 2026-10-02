@@ -4,9 +4,16 @@ Documentation=file:///usr/share/doc/happymining-agent/README.md
 CollectMode=inactive-or-failed
 
 [Service]
-# Root on purpose: this is the only HappyMining code that runs privileged.
-# It accepts exactly two requests (restart the Vast daemon, delayed reboot),
+# Root on purpose: this is the entry point of HappyMining's privileged code.
+# It accepts a fixed set of requests (restart the Vast daemon, delayed reboot,
+# and the quick appliance actions: status, apply, run-job, update-install),
 # each refused unless enabled in the root-owned /etc/happymining/helper.conf.
+# The quick appliance actions only read files, validate, write under
+# /var/lib/happymining-helper (writable with ProtectSystem=full) and start a
+# heavy unit with `systemctl start --no-block` (over AF_UNIX); Docker, mounts,
+# backups and dpkg run in happymining-appliance-apply.service,
+# happymining-appliance-job@.service and happymining-update-*.service, never
+# here. So the sandbox below is unchanged.
 User=root
 ExecStart=/usr/lib/happymining/hm-helper serve
 StandardInput=socket

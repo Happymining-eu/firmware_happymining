@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/backoff"
@@ -78,6 +79,16 @@ type Options struct {
 	// OpsEnabled lists the opt-in operation types enabled locally.
 	OpsEnabled []string
 	Helper     HelperInvoker
+	// Appliance reaches the helper for the appliance actions (status, apply,
+	// jobs, update install). Nil: the agent sends no appliance object and
+	// behaves as agent 0.1.0 did.
+	Appliance ApplianceHelper
+	// ApplianceStatusTimeout bounds the appliance-status call made before a
+	// heartbeat (default DefaultApplianceStatusTimeout).
+	ApplianceStatusTimeout time.Duration
+	// Location is the machine's local time zone for schedules and the update
+	// window; nil is time.Local.
+	Location *time.Location
 	// Preflight runs the read-only preflight for the run_preflight operation.
 	Preflight func(ctx context.Context) (overall string, report any, err error)
 	// StopAfterSamples makes Run return once that many samples were collected
@@ -116,6 +127,16 @@ type Agent struct {
 	warned     map[string]bool
 	waiting    bool
 	lastSkew   time.Time
+
+	// The appliance part (appliance.go, schedules.go, updates.go).
+	appl  applianceState
+	sched *scheduler
+	upd   *updater
+	// events carries work that background flows hand back to the loop
+	// goroutine; bg counts those flows and bgCtx is their context.
+	events chan func()
+	bg     sync.WaitGroup
+	bgCtx  context.Context
 }
 
 // New prepares the state directory, spool, sequence counter and journal.
@@ -147,6 +168,9 @@ func New(o Options) (*Agent, error) {
 	if o.SaveCredential == nil {
 		o.SaveCredential = credential.Save
 	}
+	if o.ApplianceStatusTimeout <= 0 {
+		o.ApplianceStatusTimeout = DefaultApplianceStatusTimeout
+	}
 	if err := os.MkdirAll(o.StateDir, 0o750); err != nil {
 		return nil, fmt.Errorf("state directory: %w", err)
 	}
@@ -158,7 +182,13 @@ func New(o Options) (*Agent, error) {
 		o: o, log: o.Logger, spool: sp, interval: o.Interval,
 		backoff: &backoff.Backoff{Base: o.BackoffBase, Cap: o.BackoffCap, Rand: o.Rand},
 		started: o.Now(), lastPrune: o.Now(), warned: map[string]bool{},
+		upd: &updater{}, events: make(chan func(), 16),
 	}
+	sched, err := newScheduler(o.StateDir, a.location())
+	if err != nil {
+		a.log.Error("schedule history unusable; it starts again", "error", err.Error())
+	}
+	a.sched = sched
 	seq, err := spool.OpenSequence(filepath.Join(o.StateDir, spool.SequenceFileName), sp.HighestSeq())
 	if err != nil {
 		// The counter still starts at the newest spooled sequence, and the
@@ -192,7 +222,14 @@ func (a *Agent) Close() { _ = a.journal.Close() }
 func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent loop starting", "version", version.Version, "interval_s", int(a.interval/time.Second),
 		"spool_samples", a.spool.Len(), "seq", a.seq.Last(), "synthetic", a.o.Synthetic,
-		"ops_enabled", a.handler.EnabledTypes())
+		"ops_enabled", a.handler.EnabledTypes(), "appliance", a.o.Appliance != nil)
+	// Background flows (update downloads) end with the loop.
+	bgCtx, stopBackground := context.WithCancel(ctx)
+	a.bgCtx = bgCtx
+	defer func() {
+		stopBackground()
+		a.bg.Wait()
+	}()
 	nextCollect := a.now()
 	var nextSend time.Time
 	for {
@@ -201,6 +238,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.log.Info("agent loop stopping", "spool_samples", a.spool.Len())
 			return nil
 		}
+		a.drainEvents()
 		previous := a.cred
 		a.reloadCredential()
 		if a.cred == nil {
@@ -212,6 +250,8 @@ func (a *Agent) Run(ctx context.Context) error {
 				a.waiting = true
 				a.log.Info("not paired: nothing is collected or sent until `happyminingctl pair` has been run")
 			}
+			// The machine's own schedules do not depend on the cloud.
+			a.applianceTick(ctx)
 			a.sleep(ctx, min(a.interval, a.o.CredentialPoll))
 			nextCollect = a.now()
 			continue
@@ -242,6 +282,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}
 
+		a.drainEvents()
+		a.applianceTick(ctx)
 		a.maintenance()
 		a.persistState(false)
 		if a.kick && !done {
@@ -261,7 +303,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
-// sleep waits for d or until ctx is cancelled.
+// sleep waits for d, until ctx is cancelled, or until background work hands
+// something back to the loop (which it then runs).
 func (a *Agent) sleep(ctx context.Context, d time.Duration) {
 	if d <= 0 {
 		return
@@ -271,6 +314,8 @@ func (a *Agent) sleep(ctx context.Context, d time.Duration) {
 	select {
 	case <-ctx.Done():
 	case <-t.C:
+	case f := <-a.events:
+		f()
 	}
 }
 
@@ -426,8 +471,10 @@ func Normalize(s *protocol.Sample) {
 
 // nextBatch returns the oldest sendable samples. Samples older than
 // MaxSampleAge are dropped on the way (the API would reject them anyway).
-func (a *Agent) nextBatch(limit int) []spool.Entry {
-	entries := a.spool.Peek(limit, maxBatchBytes)
+// reserved bytes of the request are taken by other content (the appliance
+// object).
+func (a *Agent) nextBatch(limit, reserved int) []spool.Entry {
+	entries := a.spool.Peek(limit, maxBatchBytes-reserved)
 	cutoff := a.now().Add(-a.o.MaxSampleAge)
 	var fresh []spool.Entry
 	var stale []uint64
@@ -460,12 +507,15 @@ func (a *Agent) nextBatch(limit int) []spool.Entry {
 // otherwise the delay before the next attempt.
 func (a *Agent) flush(ctx context.Context) (retryIn time.Duration, ok bool) {
 	limit := protocol.MaxSamplesPerRequest
+	// The appliance state is read once per flush, before the first heartbeat,
+	// and sent with every batch of it. Nil without an appliance helper.
+	appl := a.applianceReport(ctx)
 	for a.spool.Len() > 0 {
 		if ctx.Err() != nil {
 			return 0, false
 		}
 		before := a.spool.Len()
-		batch := a.nextBatch(limit)
+		batch := a.nextBatch(limit, len(appl))
 		if len(batch) == 0 {
 			if a.spool.Len() >= before {
 				return a.backoff.Next(), false // nothing sendable and nothing dropped
@@ -477,6 +527,7 @@ func (a *Agent) flush(ctx context.Context) (retryIn time.Duration, ok bool) {
 			BootID:       a.o.BootID,
 			AgentVersion: version.Version,
 			Samples:      make([]json.RawMessage, len(batch)),
+			Appliance:    appl,
 		}
 		seqs := make([]uint64, len(batch))
 		for i, e := range batch {
@@ -577,6 +628,9 @@ func (a *Agent) onAcknowledged(ctx context.Context, resp *protocol.HeartbeatResp
 			a.interval = next
 		}
 	}
+	// The desired state first, then the operations: an operation may refer to
+	// what the new document configures.
+	a.onApplianceResponse(ctx, resp.Appliance)
 	if len(resp.Operations) > 0 {
 		a.handler.HandleAll(ctx, resp.Operations)
 	}
@@ -635,7 +689,9 @@ func (a *Agent) persistState(force bool) {
 		st.State = StateOnline
 	}
 	if a.cred != nil {
-		st.DeviceID, st.CredentialID = a.cred.DeviceID, a.cred.CredentialID
+		// The machine id is not a secret. The root helper reads it from this
+		// file to name backups; it never reads the credential file.
+		st.DeviceID, st.CredentialID, st.MachineID = a.cred.DeviceID, a.cred.CredentialID, a.cred.MachineID
 	}
 	fingerprint, _ := json.Marshal(st)
 	if !force && string(fingerprint) == a.lastState && a.now().Sub(a.lastStateT) < 5*time.Minute {

@@ -49,6 +49,7 @@ from .routers import views
 from .routers.auth import set_session_cookie
 from .security import constant_time_equal
 from .services import (
+    access,
     accounts,
     api_clients,
     exceptions_queue,
@@ -57,6 +58,7 @@ from .services import (
     payouts,
     provider_sync,
     receipts,
+    remote_access,
     statements,
 )
 from .services import earnings as earnings_service
@@ -269,20 +271,33 @@ def _period() -> tuple[date, date]:
     return end - timedelta(days=29), end
 
 
-def _owner_summary(db: Session, settings: Settings, owner: Owner) -> dict[str, Any]:
-    start, end = _period()
+def _may_see_money(principal: Principal) -> bool:
+    """Staff as before; in an owner's organisation only its administrators."""
+    return principal.role != "owner" or access.has_org_role(principal, "org_admin")
+
+
+def _owner_summary(db: Session, settings: Settings, owner: Owner, *, money: bool = True) -> dict[str, Any]:
     machines = (
         db.execute(select(Machine).where(Machine.owner_id == owner.id).order_by(Machine.label))
         .scalars()
         .all()
     )
-    return {
+    summary: dict[str, Any] = {
         "owner": owner,
+        "machines": [views.machine_view(settings, m, staff=False) for m in machines],
+        "show_money": money,
+    }
+    if not money:
+        # Operators and viewers: no figure is computed, so none can reach the page.
+        return summary
+    start, end = _period()
+    return {
+        **summary,
         "balances": owner_balances(db, owner.id).as_dict(),
         "statement": statements.owner_statement(db, owner.id, start, end),
-        "machines": [views.machine_view(settings, m, staff=False) for m in machines],
         "payouts": statements.owner_payout_history(db, owner.id, limit=10),
         "beneficiary": db.get(OwnerBeneficiary, owner.id),
+        "fee": fees.fee_for(db, owner.id, datetime.now(UTC).date()),
     }
 
 
@@ -296,10 +311,8 @@ def dashboard(
     if principal.role == "owner":
         owner = db.get(Owner, principal.owner_id)
         assert owner is not None
-        fee = fees.fee_for(db, owner.id, datetime.now(UTC).date())
-        return render(
-            request, settings, principal, "owner.html", fee=fee, **_owner_summary(db, settings, owner)
-        )
+        summary = _owner_summary(db, settings, owner, money=_may_see_money(principal))
+        return render(request, settings, principal, "owner.html", **summary)
 
     owners = db.execute(select(Owner).order_by(Owner.display_name)).scalars().all()
     machines = db.execute(select(Machine).order_by(Machine.label)).scalars().all()
@@ -332,8 +345,8 @@ def owner_page(
     owner = db.get(Owner, owner_id)
     if owner is None:
         raise NotFound()
-    fee = fees.fee_for(db, owner.id, datetime.now(UTC).date())
-    return render(request, settings, principal, "owner.html", fee=fee, **_owner_summary(db, settings, owner))
+    summary = _owner_summary(db, settings, owner, money=_may_see_money(principal))
+    return render(request, settings, principal, "owner.html", **summary)
 
 
 @router.get("/machines/{machine_id}", response_class=HTMLResponse)
@@ -355,6 +368,17 @@ def machine_page(
             operation_query = operation_query.where(Operation.issued_at >= period_start)
     samples = db.execute(sample_query.order_by(TelemetrySample.collected_at.desc()).limit(20)).scalars().all()
     operations = db.execute(operation_query.order_by(Operation.issued_at.desc()).limit(20)).scalars().all()
+    # Who manages the machine and the remote-access grants: for the owner's
+    # administrators and for staff. Monitoring above stays as it is for everyone.
+    is_org_admin = access.has_org_role(principal, "org_admin")
+    remote = None
+    grant_users: dict[str, str] = {}
+    if principal.is_staff or is_org_admin:
+        remote = remote_access.describe(db, machine, include_previous_owners=principal.is_staff)
+        ids = {uuid.UUID(g["granted_by"]) for g in (*remote["grants"], *remote["past_grants"])}
+        if ids:
+            rows = db.execute(select(User.id, User.email).where(User.id.in_(ids))).all()
+            grant_users = {str(user_id): email for user_id, email in rows}
     return render(
         request,
         settings,
@@ -365,6 +389,12 @@ def machine_page(
         samples=[views.telemetry_view(s) for s in samples],
         operations=[views.operation_view(o) for o in operations],
         safe_types=SAFE_OPERATION_TYPES,
+        remote=remote,
+        grant_users=grant_users,
+        is_org_admin=is_org_admin,
+        # Staff may request operations on a customer-managed machine only with a manage grant.
+        staff_may_manage=principal.is_staff and access.staff_access(db, machine) == "manage",
+        grant_durations=remote_access.grant_durations(settings),
     )
 
 
@@ -376,6 +406,7 @@ def earnings_page(
     db: Session = Depends(get_db),
     settings: Settings = Depends(settings_dep),
 ):
+    access.require_money_access(principal)
     scope = principal.owner_id if principal.role == "owner" else owner_id
     query = (
         select(EarningBucket).order_by(EarningBucket.day.desc(), EarningBucket.external_machine_id).limit(200)
@@ -417,6 +448,7 @@ def pairing_create(
     request: Request,
     owner_id: uuid.UUID = Form(...),
     machine_label: str = Form(""),
+    management: str = Form("company"),
     csrf_token: str = Form(""),
     principal: Principal = Depends(page_principal),
     db: Session = Depends(get_db),
@@ -433,6 +465,7 @@ def pairing_create(
             machine_label=machine_label,
             created_by=principal.user.id,
             is_synthetic=settings.is_demo,
+            management=management,
         )
         db.commit()
     except AppError as exc:
@@ -1011,6 +1044,8 @@ def operation_create(
         params = {"delay_s": 300}
     try:
         machine = load_machine(db, principal, machine_id, lock=True)
+        # On a customer-managed machine staff need a remote-access grant (manage).
+        access.require_manage(db, principal, machine)
         try:
             provider = get_provider(settings)
         except Exception:
@@ -1159,3 +1194,9 @@ def integrations_revoke(
         lambda: api_clients.revoke_client(db, principal.actor(client_ip(request)), client_id, reason),
         "API client revoked. Its token no longer works.",
     )
+
+
+# Organisation users, machine management and remote-access grants (dashboard_org.py), and the
+# appliance page and firmware releases (dashboard_appliance.py): their handlers register on the
+# router above.
+from . import dashboard_appliance, dashboard_org  # noqa: E402, F401

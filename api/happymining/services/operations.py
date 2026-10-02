@@ -22,11 +22,15 @@ from ..db import lock_row
 from ..errors import Conflict, Forbidden, Gone, InvalidRequest, NotFound, NotImplementedFeature
 from ..models import OPERATION_FINAL, ApiClient, Device, Machine, Operation, utcnow
 from ..providers.base import Provider
+from ..sealing import VERSION_RE
 from ..security import constant_time_equal, new_nonce, redact, redact_text
+from . import remote_access
 from .api_clients import ensure_still_active, is_usable
+from .catalog import ID_RE as PLUGIN_ID_RE
 from .maintenance import DISRUPTIVE_TYPES, describe_blocked, evaluate
 
 DIAGNOSTIC_SECTIONS = ("services", "gpu", "disk", "network", "agent")
+APPLIANCE_JOBS = ("vectorize_sync", "backup_run", "update_check", "plugin_restart")
 MAX_RESULT_BYTES = 64 * 1024
 
 
@@ -67,6 +71,28 @@ def _profile(params: dict[str, Any]) -> dict[str, Any]:
     return {"profile_id": value}
 
 
+def _appliance_job(params: dict[str, Any]) -> dict[str, Any]:
+    """``{"job": ...}``, plus ``"plugin"`` for ``plugin_restart`` and for nothing else."""
+    job = params.get("job")
+    if not isinstance(job, str) or job not in APPLIANCE_JOBS:
+        raise InvalidRequest('params must be {"job": <one of ' + ", ".join(APPLIANCE_JOBS) + ">}")
+    if job != "plugin_restart":
+        if set(params) != {"job"}:
+            raise InvalidRequest(f'params must be {{"job": "{job}"}}; only plugin_restart takes a plugin')
+        return {"job": job}
+    plugin = params.get("plugin")
+    if set(params) != {"job", "plugin"} or not isinstance(plugin, str) or not PLUGIN_ID_RE.fullmatch(plugin):
+        raise InvalidRequest('params must be {"job": "plugin_restart", "plugin": "<plugin id>"}')
+    return {"job": job, "plugin": plugin}
+
+
+def _install_update(params: dict[str, Any]) -> dict[str, Any]:
+    version = params.get("version")
+    if set(params) != {"version"} or not isinstance(version, str) or not VERSION_RE.fullmatch(version):
+        raise InvalidRequest('params must be {"version": "<MAJOR.MINOR.PATCH>"}')
+    return {"version": version}
+
+
 # type -> parameter validator. This table is the whole remote surface.
 OPERATION_TYPES = {
     "refresh_inventory": _no_params,
@@ -79,10 +105,22 @@ OPERATION_TYPES = {
     "reboot": _int_range("delay_s", 60, 300),
     "run_benchmark": _int_range("duration_s", 30, 600),
     "apply_hardware_profile": _profile,
+    # docs/appliance.md, section 6.5. Neither is disruptive for renters: they
+    # touch only HappyMining's own containers and package.
+    "appliance_run_job": _appliance_job,
+    "install_update": _install_update,
 }
 # Typed in the protocol but with no implementation in agent 0.1.0. Refused
 # here explicitly instead of being queued to fail on the device.
 NOT_IMPLEMENTED_TYPES = frozenset({"run_benchmark", "apply_hardware_profile"})
+# Requested only through the appliance routes (services/appliance.py and
+# services/releases.py), which check what the general operation routes do not:
+# that the caller may manage the appliance, that the plugin is configured,
+# that the release exists and may be installed. The general routes, the
+# dashboard form and the integration API cannot queue them.
+APPLIANCE_ONLY_TYPES = frozenset({"appliance_run_job", "install_update"})
+# What the general operation routes accept.
+GENERAL_TYPES = tuple(sorted(set(OPERATION_TYPES) - APPLIANCE_ONLY_TYPES))
 
 
 def request_operation(
@@ -97,11 +135,16 @@ def request_operation(
     requested_by: uuid.UUID | None,
     client_id: uuid.UUID | None = None,
     request_key: str | None = None,
+    via_appliance: bool = False,
 ) -> Operation:
     validator = OPERATION_TYPES.get(op_type)
     if validator is None:
-        raise InvalidRequest("unknown operation type; allowed: " + ", ".join(sorted(OPERATION_TYPES)))
+        raise InvalidRequest("unknown operation type; allowed: " + ", ".join(GENERAL_TYPES))
     clean = validator(params or {})
+    if op_type in APPLIANCE_ONLY_TYPES and not via_appliance:
+        raise InvalidRequest(
+            f"{op_type} is requested through the machine's appliance routes, not as a plain operation"
+        )
     device = db.execute(select(Device).where(Device.machine_id == machine.id)).scalar_one_or_none()
     if device is None or device.status != "active":
         raise Conflict("this machine has no active paired device")
@@ -267,6 +310,13 @@ def pending_for_device(
                 operation.completed_at = utcnow()
                 operation.detail = "the requesting API client is no longer valid"
                 continue
+        # Requested under an authority that has ended since: a remote-access
+        # grant that expired or was revoked, a machine that changed owner or
+        # went back to being managed by its owner. Nothing runs when a grant
+        # expires, so this is where it takes effect. Only an operation that has
+        # not been handed over yet is cancelled.
+        if remote_access.cancel_if_unauthorised(db, operation, machine):
+            continue
         if operation.type in DISRUPTIVE_TYPES:
             # Second check, immediately before the operation leaves the server.
             decision = evaluate(db, settings, provider, machine, operation.type)

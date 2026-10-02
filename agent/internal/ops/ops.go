@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/client"
@@ -34,12 +35,30 @@ const NotImplemented = "not implemented in this agent version"
 var DiagnosticSections = []string{"services", "gpu", "disk", "network", "agent"}
 
 // DefaultEnabled are the operation types enabled without local opt-in.
+//
+// The two appliance operations (docs/appliance.md, section 6.5) are enabled
+// here because they are not disruptive for renters: appliance_run_job starts
+// one of HappyMining's own jobs (index sync, backup, restart of a catalog
+// plugin, update check) and install_update installs HappyMining's own signed
+// package. Neither can stop Vast's daemon, a renter container or the machine.
+// The real gate for both is on the machine and is off by default: the root
+// helper performs them only when its switches in the root-owned helper.conf
+// allow it (ALLOW_PLUGINS, ALLOW_BACKUP, ALLOW_UPDATE), and it validates every
+// value again. Listing them here only lets the request reach that gate.
 var DefaultEnabled = []string{
 	protocol.OpRefreshInventory,
 	protocol.OpCollectDiagnostics,
 	protocol.OpRunPreflight,
 	protocol.OpRotateCredential,
+	protocol.OpApplianceRunJob,
+	protocol.OpInstallUpdate,
 }
+
+// ApplianceJobs are the jobs appliance_run_job may name (section 6.5).
+var ApplianceJobs = []string{"vectorize_sync", "backup_run", "update_check", "plugin_restart"}
+
+// JobPluginRestart is the only job that takes a plugin.
+const JobPluginRestart = "plugin_restart"
 
 // Reboot delay bounds in seconds.
 const (
@@ -56,6 +75,16 @@ type Executor interface {
 	RotateCredential(ctx context.Context) (detail string, err error)
 	RestartVastDaemon(ctx context.Context) (detail string, err error)
 	Reboot(ctx context.Context, delayS int) (detail string, err error)
+	// ApplianceRunJob starts one appliance job; it returns once the job is
+	// started (or refused), not when it is finished. plugin is set for
+	// plugin_restart only.
+	ApplianceRunJob(ctx context.Context, job, plugin string) (detail string, err error)
+	// InstallUpdate starts downloading, checking and installing the release
+	// version and returns at once. A non-nil error means nothing was started.
+	// Otherwise done is called exactly once with the outcome, and it must be
+	// called from the goroutine that calls Handle (the agent loop): the
+	// journal and the acknowledgement are not safe for concurrent use.
+	InstallUpdate(ctx context.Context, version string, done func(detail string, err error)) error
 }
 
 // Acker delivers an acknowledgement to the API.
@@ -72,6 +101,9 @@ type Handler struct {
 	Log      *slog.Logger
 	Now      func() time.Time
 	enabled  map[string]bool
+	// inflight holds the ids of operations that run in the background and
+	// have no final outcome yet (install_update).
+	inflight map[string]bool
 }
 
 // NewHandler builds a Handler. optIn lists the opt-in types the local
@@ -80,7 +112,7 @@ func NewHandler(j *Journal, exec Executor, acker Acker, r *redact.Redactor, log 
 	if now == nil {
 		now = time.Now
 	}
-	h := &Handler{Journal: j, Exec: exec, Acker: acker, Redactor: r, Log: log, Now: now, enabled: map[string]bool{}}
+	h := &Handler{Journal: j, Exec: exec, Acker: acker, Redactor: r, Log: log, Now: now, enabled: map[string]bool{}, inflight: map[string]bool{}}
 	for _, t := range DefaultEnabled {
 		h.enabled[t] = true
 	}
@@ -108,6 +140,7 @@ var knownTypes = []string{
 	protocol.OpRefreshInventory, protocol.OpCollectDiagnostics, protocol.OpRunPreflight,
 	protocol.OpRotateCredential, protocol.OpRestartVastDaemon, protocol.OpReboot,
 	protocol.OpRunBenchmark, protocol.OpApplyHardwareProfile,
+	protocol.OpApplianceRunJob, protocol.OpInstallUpdate,
 }
 
 func isKnown(t string) bool {
@@ -198,6 +231,89 @@ func ParseRebootParams(raw json.RawMessage) (int, error) {
 	return int(n), nil
 }
 
+var (
+	rePluginID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
+	reVersion  = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$`)
+)
+
+// paramKeys decodes params as one JSON object and returns its members. Absent
+// or null params are an empty object. A key that is present counts, even with
+// a null value, as the server counts it.
+func paramKeys(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+		return map[string]json.RawMessage{}, nil
+	}
+	if t := bytes.TrimSpace(raw); t[0] != '{' {
+		return nil, errors.New("params must be a JSON object")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var m map[string]json.RawMessage
+	if err := dec.Decode(&m); err != nil {
+		return nil, errors.New("params are not a JSON object")
+	}
+	if dec.More() {
+		return nil, errors.New("params contain trailing data")
+	}
+	return m, nil
+}
+
+// jsonString decodes a JSON string (and nothing else: null is refused).
+func jsonString(raw json.RawMessage) (string, bool) {
+	if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '"' {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// ParseApplianceJobParams validates appliance_run_job params exactly as the
+// server does: {"job": <one of ApplianceJobs>}, plus "plugin" (a plugin id)
+// for plugin_restart and for nothing else.
+func ParseApplianceJobParams(raw json.RawMessage) (job, plugin string, err error) {
+	m, err := paramKeys(raw)
+	if err != nil {
+		return "", "", err
+	}
+	job, ok := jsonString(m["job"])
+	known := false
+	for _, j := range ApplianceJobs {
+		if ok && job == j {
+			known = true
+		}
+	}
+	if !known {
+		return "", "", errors.New("job must be one of " + strings.Join(ApplianceJobs, ", "))
+	}
+	if job != JobPluginRestart {
+		if len(m) != 1 {
+			return "", "", errors.New("only plugin_restart takes a parameter besides job")
+		}
+		return job, "", nil
+	}
+	plugin, ok = jsonString(m["plugin"])
+	if len(m) != 2 || !ok || !rePluginID.MatchString(plugin) {
+		return "", "", errors.New(`plugin_restart needs exactly {"job", "plugin": "<plugin id>"}`)
+	}
+	return job, plugin, nil
+}
+
+// ParseInstallUpdateParams validates install_update params exactly as the
+// server does: {"version": "MAJOR.MINOR.PATCH"} and nothing else.
+func ParseInstallUpdateParams(raw json.RawMessage) (string, error) {
+	m, err := paramKeys(raw)
+	if err != nil {
+		return "", err
+	}
+	version, ok := jsonString(m["version"])
+	if len(m) != 1 || !ok || !reVersion.MatchString(version) {
+		return "", errors.New(`params must be {"version": "<MAJOR.MINOR.PATCH>"}`)
+	}
+	return version, nil
+}
+
 // HandleAll processes the operations of one heartbeat response in order.
 func (h *Handler) HandleAll(ctx context.Context, operations []protocol.Operation) {
 	if len(operations) > MaxPerResponse {
@@ -232,6 +348,13 @@ func (h *Handler) Handle(ctx context.Context, op protocol.Operation) string {
 	// executed again. The recorded outcome is acknowledged again so that an
 	// acknowledgement lost in transit does not turn into a wrong final state.
 	if rec, seen := h.Journal.Lookup(op.ID); seen {
+		if rec.Final == "" && h.inflight[op.ID] {
+			// Still running in the background: the server did not get the
+			// first acknowledgement. Say so again; nothing is started twice.
+			log.Info("operation repeated while it runs; acknowledged as accepted again")
+			h.ack(ctx, log, op.ID, nonce, protocol.AckAccepted, "in progress", nil)
+			return protocol.AckAccepted
+		}
 		log.Warn("replayed operation id; not executing", "recorded_status", rec.Final)
 		if rec.Final != "" {
 			h.ack(ctx, log, op.ID, nonce, rec.Final,
@@ -269,15 +392,21 @@ func (h *Handler) Handle(ctx context.Context, op protocol.Operation) string {
 	}
 
 	var (
-		sections []string
-		delayS   int
-		perr     error
+		sections    []string
+		delayS      int
+		job, plugin string
+		release     string
+		perr        error
 	)
 	switch op.Type {
 	case protocol.OpCollectDiagnostics:
 		sections, perr = ParseDiagnosticsParams(op.Params)
 	case protocol.OpReboot:
 		delayS, perr = ParseRebootParams(op.Params)
+	case protocol.OpApplianceRunJob:
+		job, plugin, perr = ParseApplianceJobParams(op.Params)
+	case protocol.OpInstallUpdate:
+		release, perr = ParseInstallUpdateParams(op.Params)
 	default:
 		perr = strictDecode(op.Params, &noParams{})
 	}
@@ -310,6 +439,33 @@ func (h *Handler) Handle(ctx context.Context, op protocol.Operation) string {
 		h.ack(ctx, log, op.ID, nonce, protocol.AckAccepted, "starting", nil)
 	}
 
+	if op.Type == protocol.OpInstallUpdate {
+		// Downloading a package takes minutes: it runs in the background so
+		// that telemetry keeps flowing, and the final acknowledgement follows
+		// when it is done. The id is journaled already, so a restart in
+		// between never runs it twice.
+		h.ack(ctx, log, op.ID, nonce, protocol.AckAccepted, "update to "+release+" starting", nil)
+		final := ""
+		h.inflight[op.ID] = true
+		err := h.Exec.InstallUpdate(ctx, release, func(detail string, err error) {
+			if final != "" {
+				return // exactly one final outcome
+			}
+			delete(h.inflight, op.ID)
+			// The context of the heartbeat that brought the operation may be
+			// gone by now.
+			final = h.finish(context.Background(), log, op.ID, nonce, detail, nil, err)
+		})
+		if err != nil && final == "" {
+			delete(h.inflight, op.ID)
+			final = h.finish(ctx, log, op.ID, nonce, "", nil, err)
+		}
+		if final != "" {
+			return final
+		}
+		return protocol.AckAccepted
+	}
+
 	var (
 		detail string
 		result any
@@ -329,7 +485,15 @@ func (h *Handler) Handle(ctx context.Context, op protocol.Operation) string {
 		detail, err = h.Exec.RestartVastDaemon(ctx)
 	case protocol.OpReboot:
 		detail, err = h.Exec.Reboot(ctx, delayS)
+	case protocol.OpApplianceRunJob:
+		detail, err = h.Exec.ApplianceRunJob(ctx, job, plugin)
 	}
+	return h.finish(ctx, log, op.ID, nonce, detail, result, err)
+}
+
+// finish records the final outcome of an executed operation in the journal and
+// acknowledges it. It returns the final status.
+func (h *Handler) finish(ctx context.Context, log *slog.Logger, id, nonce, detail string, result any, err error) string {
 	status := protocol.AckSucceeded
 	if err != nil {
 		status = protocol.AckFailed
@@ -337,11 +501,11 @@ func (h *Handler) Handle(ctx context.Context, op protocol.Operation) string {
 		result = nil
 	}
 	detail = protocol.Truncate(h.Redactor.String(detail), protocol.MaxDetailLen)
-	if jerr := h.Journal.Finish(op.ID, status, detail); jerr != nil {
+	if jerr := h.Journal.Finish(id, status, detail); jerr != nil {
 		log.Error("cannot record operation outcome in the journal", "error", jerr.Error())
 	}
 	log.Info("operation finished", "status", status)
-	h.ack(ctx, log, op.ID, nonce, status, detail, result)
+	h.ack(ctx, log, id, nonce, status, detail, result)
 	return status
 }
 

@@ -8,8 +8,9 @@ the migration job start from the prepared directory, read-only.
     python bootstrap.py <owner/repo> <commit sha> <destination root>
 
 Result: ``<destination root>/<sha>/`` containing ``api/``, ``dashboard/``,
-``migrations/``, ``alembic.ini`` and ``site/`` (the dependencies), and a
-``.ready`` marker written last. A directory with the marker is never touched
+``migrations/``, ``alembic.ini``, ``appliance/catalog/`` (the plugin catalog
+the API offers, read from next to ``api/``) and ``site/`` (the dependencies),
+and a ``.ready`` marker written last. A directory with the marker is never touched
 again, so a restart is a no-op. Older versions are removed once the new one is
 ready.
 
@@ -34,7 +35,16 @@ import tarfile
 import urllib.request
 from pathlib import Path, PurePosixPath
 
-WANTED = ("api/happymining/", "api/requirements.lock.txt", "dashboard/", "migrations/", "alembic.ini")
+WANTED = (
+    "api/happymining/",
+    "api/requirements.lock.txt",
+    "dashboard/",
+    "migrations/",
+    "alembic.ini",
+    # The plugin catalog (docs/appliance.md, section 7). Nothing else under
+    # appliance/ runs on the server: not the vectorizer, not the test data.
+    "appliance/catalog/",
+)
 MAX_TARBALL_BYTES = 64 * 1024 * 1024
 READY = ".ready"
 

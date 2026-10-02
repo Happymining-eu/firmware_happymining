@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Organisation · HappyMining OS{% endblock %}
+{% block content %}
+<h1>{{ owner.display_name }} {{ m.synthetic(owner.is_synthetic) }}</h1>
+<p class="lead">The people of your organisation who can sign in here, and what each of them may do.</p>
+
+<h2>Users</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>User</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.email }}{% if u.display_name %}<div class="note">{{ u.display_name }}</div>{% endif %}
+          {% if u.id == user.id %}<span class="pill">you</span>{% endif %}</td>
+        <td>
+          <form class="inline" method="post" action="/organisation/users/{{ u.id }}">
+            {{ m.csrf_field(csrf) }}
+            <select name="org_role" aria-label="Role of {{ u.email }}">
+              {% for r in org_roles %}<option value="{{ r }}" {% if r == u.org_role %}selected{% endif %}>{{ r | replace("org_", "") }}</option>{% endfor %}
+            </select>
+            <button class="secondary" type="submit">Change role</button>
+          </form>
+        </td>
+        <td>{% if u.is_active %}<span class="pill good">active</span>{% else %}<span class="pill bad">deactivated</span>{% endif %}</td>
+        <td>{% if u.last_login_at %}{{ u.last_login_at.strftime("%Y-%m-%d %H:%M") }}{% else %}<span class="note">never</span>{% endif %}</td>
+        <td>
+          <form class="inline" method="post" action="/organisation/users/{{ u.id }}">
+            {{ m.csrf_field(csrf) }}
+            {% if u.is_active %}
+              <input type="hidden" name="is_active" value="false">
+              <button class="secondary" type="submit">Deactivate</button>
+            {% else %}
+              <input type="hidden" name="is_active" value="true">
+              <button class="secondary" type="submit">Reactivate</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="note">No users yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="note">Deactivating a user signs them out everywhere at once. The organisation always keeps at least one active administrator:
+  the last one cannot be deactivated or given another role.</p>
+
+<h2>Add a user</h2>
+<form class="panel" method="post" action="/organisation/users">
+  {{ m.csrf_field(csrf) }}
+  <div class="fields">
+    <label>Email <input name="email" type="email" required maxlength="200" autocomplete="off"></label>
+    <label>Name <input name="display_name" maxlength="200"></label>
+    <label>Role
+      <select name="org_role" required>
+        {% for r in org_roles %}<option value="{{ r }}" {% if r == "org_viewer" %}selected{% endif %}>{{ r | replace("org_", "") }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Initial password <input name="password" type="password" required minlength="{{ min_password_length }}" maxlength="1024" autocomplete="new-password"></label>
+  </div>
+  <button type="submit">Add user</button>
+  <p class="note">At least {{ min_password_length }} characters. Give it to the person over a channel you trust.</p>
+</form>
+
+<h2>What each role may do</h2>
+<dl class="kv">
+  {% for r in org_roles %}<dt>{{ r | replace("org_", "") }}</dt><dd>{{ org_role_help[r] }}</dd>{% endfor %}
+</dl>
+{% endblock %}

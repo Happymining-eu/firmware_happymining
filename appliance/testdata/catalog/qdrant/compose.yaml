@@ -1,0 +1,6 @@
+services:
+  qdrant:
+    image: docker.io/example/qdrant:1.0.0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: qdrant

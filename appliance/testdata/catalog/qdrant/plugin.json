@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "id": "qdrant",
+  "version": "1",
+  "name": "Qdrant (fixture)",
+  "summary": "Vector database.",
+  "homepage": "https://example.invalid/qdrant",
+  "license": "Apache-2.0",
+  "gpu": false,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [],
+  "ports": [
+    {
+      "name": "api",
+      "port": 6333,
+      "protocol": "http",
+      "ui": false
+    }
+  ],
+  "settings": {},
+  "secrets": [],
+  "images": [
+    {
+      "ref": "docker.io/example/qdrant:1.0.0",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "storage",
+      "backup": "always"
+    }
+  ],
+  "post_start": []
+}

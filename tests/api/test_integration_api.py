@@ -55,6 +55,7 @@ ROUTE_SCOPES = {
     ("GET", BASE + "/machines"): "fleet:read",
     ("GET", BASE + "/machines/{machine_id}"): "fleet:read",
     ("GET", BASE + "/machines/{machine_id}/telemetry"): "telemetry:read",
+    ("GET", BASE + "/machines/{machine_id}/appliance"): "appliance:read",
     ("GET", BASE + "/operation-types"): "operations:read",
     ("GET", BASE + "/operations"): "operations:read",
     ("GET", BASE + "/operations/{operation_id}"): "operations:read",
@@ -221,8 +222,16 @@ def test_there_is_no_scope_for_money_users_pairing_or_binding():
         "operations:write",
         "operations:disruptive",
         "earnings:read",
+        # Read only (docs/appliance.md, section 3): mode, plugin states, indexing,
+        # backup and update state. Nothing that changes the appliance.
+        "appliance:read",
     }
     assert set(api_clients.SCOPE_HELP) == set(API_CLIENT_SCOPES)
+    # Typed operations are the only thing any scope lets a client change. There is
+    # no scope that writes money, users, pairing codes, provider bindings or the
+    # appliance configuration.
+    writing = {scope for scope in API_CLIENT_SCOPES if not scope.endswith(":read")}
+    assert writing == {"operations:write", "operations:disruptive"}
 
 
 def test_client_names_are_unique(world):

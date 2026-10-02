@@ -1,0 +1,128 @@
+{
+ "why": "model with a space",
+ "document": {
+  "schema": 1,
+  "revision": 12,
+  "mode": "private_ai",
+  "plugins": [
+   {
+    "id": "ollama",
+    "enabled": true,
+    "settings": {
+     "models": [
+      "hermes3:8b",
+      "bge-m3"
+     ]
+    }
+   },
+   {
+    "id": "qdrant",
+    "enabled": true,
+    "settings": {}
+   },
+   {
+    "id": "vectorizer",
+    "enabled": true,
+    "settings": {}
+   },
+   {
+    "id": "assistant",
+    "enabled": true,
+    "settings": {
+     "bind": "localhost",
+     "workers": 4,
+     "telemetry": false,
+     "model": "hermes3:8b"
+    }
+   }
+  ],
+  "nas": [
+   {
+    "id": "docs",
+    "kind": "smb",
+    "host": "nas.lan",
+    "share": "documents",
+    "subpath": "",
+    "username": "indexer",
+    "domain": "",
+    "secret": "nas.docs.password",
+    "access": "read"
+   },
+   {
+    "id": "bk",
+    "kind": "nfs",
+    "host": "192.168.1.20",
+    "export": "/volume1/backup",
+    "access": "write"
+   }
+  ],
+  "vectorizer": {
+   "sources": [
+    "docs"
+   ],
+   "extensions": [
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
+    "html",
+    "md",
+    "txt"
+   ],
+   "exclude": [
+    "#recycle",
+    "private/hr"
+   ],
+   "max_file_mib": 64,
+   "embedding_model": "bge-m3",
+   "ocr": false,
+   "answer": {
+    "provider": "openai_compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt 4",
+    "secret": "ai.answer.api_key"
+   }
+  },
+  "backup": {
+   "enabled": true,
+   "destination": {
+    "kind": "nas",
+    "nas_id": "bk",
+    "subpath": "happymining"
+   },
+   "include_models": false,
+   "keep": 7
+  },
+  "schedules": [
+   {
+    "id": "nightly-sync",
+    "job": "vectorize_sync",
+    "every": "daily",
+    "hour": 2,
+    "minute": 30,
+    "enabled": true
+   },
+   {
+    "id": "weekly-backup",
+    "job": "backup_run",
+    "every": "weekly",
+    "weekday": 6,
+    "hour": 3,
+    "minute": 0,
+    "enabled": true
+   }
+  ],
+  "update": {
+   "channel": "stable",
+   "policy": "auto",
+   "window": {
+    "start_hour": 2,
+    "end_hour": 5
+   }
+  },
+  "secrets": {
+   "nas.docs.password": "hmseal1.BG9-prt1TqhB5Rlfynq9b3i37HVHi28C1ZSC94OoBDNxgkvbSROTFE_AdgosTxYl03SnP-g32MJdo1pGCo0BrZiB1mIXwImaMHmO4tfYCUY48M4-xGC4x1RbUGU3Kbxx9G4z0UZ1nXZlBSSuKw",
+   "ai.answer.api_key": "hmseal1.BIrPW93tdk3959RVOOHrDge_UcK7QckRvQo5fZ6hc12pKr3DM7Rq3sLeHlkHNzd4edBWs_CpzHCRY3Z3haPJr-bw7bow4ON87YY0rN5if77AlaTbHK_W9bt1VHz1eFkmhgBvQbSJ2cX-"
+  }
+ }
+}

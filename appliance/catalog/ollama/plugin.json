@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "id": "ollama",
+  "version": "1",
+  "name": "Ollama",
+  "summary": "Runs open models on the machine's GPUs and computes the embeddings for the vectorizer. Its API has no authentication: unless you choose otherwise it is reachable from this machine and the other plugins only.",
+  "homepage": "https://ollama.com",
+  "license": "MIT",
+  "gpu": true,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [],
+  "ports": [
+    {
+      "name": "api",
+      "port": 11434,
+      "protocol": "http",
+      "ui": false
+    }
+  ],
+  "settings": {
+    "models": {
+      "type": "string_list",
+      "label": "Models to keep installed",
+      "env": "HM_SET_MODELS",
+      "max_items": 8,
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,80}(:[A-Za-z0-9._-]{1,40})?$",
+      "default": []
+    },
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "localhost"
+    },
+    "keep_alive": {
+      "type": "enum",
+      "label": "Keep a model in memory after its last use",
+      "env": "HM_SET_KEEP_ALIVE",
+      "values": [
+        "5m",
+        "30m",
+        "2h",
+        "24h"
+      ],
+      "default": "5m"
+    },
+    "context_length": {
+      "type": "int",
+      "label": "Context length in tokens (0: chosen by Ollama from the GPU memory)",
+      "env": "HM_SET_CONTEXT_LENGTH",
+      "min": 0,
+      "max": 1048576,
+      "default": 0
+    },
+    "local_only": {
+      "type": "bool",
+      "label": "Local models only (turns off Ollama's cloud models and web search)",
+      "env": "HM_SET_LOCAL_ONLY",
+      "default": true
+    }
+  },
+  "secrets": [],
+  "images": [
+    {
+      "ref": "docker.io/ollama/ollama:0.35.0",
+      "digest": "sha256:2a6e883b917fc543389599dae79918f5cac9e1438890506982f44aa4f5625d01",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "models",
+      "backup": "models"
+    }
+  ],
+  "post_start": [
+    {
+      "service": "ollama",
+      "exec": [
+        "ollama",
+        "pull",
+        "{item}"
+      ],
+      "for_each": "models",
+      "timeout_s": 3600
+    }
+  ]
+}

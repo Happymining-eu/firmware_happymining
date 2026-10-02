@@ -1,0 +1,6 @@
+services:
+  ollama:
+    image: docker.io/example/ollama:1.0.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: ollama

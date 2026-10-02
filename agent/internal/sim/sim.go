@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/agent"
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/appliance"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/client"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/credential"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/enroll"
@@ -63,6 +64,14 @@ type Options struct {
 	BackoffCap     time.Duration
 	SpoolQuota     int64
 	Logger         *slog.Logger
+	// Appliance makes every machine report a synthetic appliance state and
+	// take desired-state documents through a SyntheticHelper.
+	Appliance bool
+	// ApplianceCapabilities are what the synthetic helpers say they may do.
+	ApplianceCapabilities appliance.Capabilities
+	// ApplianceCatalog is the catalog documents are validated against; nil
+	// lists no plugin and refuses every document.
+	ApplianceCatalog *appliance.Catalog
 }
 
 // MachineResult is the outcome for one simulated machine.
@@ -76,7 +85,11 @@ type MachineResult struct {
 	SpoolLeft        int    `json:"spool_left"`
 	FailedRequests   int64  `json:"failed_requests_injected"`
 	LostResponses    int64  `json:"lost_responses_injected"`
-	Error            string `json:"error,omitempty"`
+	// With Options.Appliance: the synthetic sealing key the machine reports
+	// and the last document revision it processed.
+	SealPublicKey     string `json:"seal_public_key,omitempty"`
+	ApplianceRevision int64  `json:"appliance_applied_revision,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // Summary is the outcome of a simulation.
@@ -176,6 +189,7 @@ func Run(ctx context.Context, o Options) (Summary, error) {
 		result MachineResult
 		agent  *agent.Agent
 		fault  *faultTransport
+		helper *SyntheticHelper
 	}
 	machines := make([]*machine, o.Machines)
 	nextCode := 0
@@ -199,6 +213,14 @@ func Run(ctx context.Context, o Options) (Summary, error) {
 			return summary, err
 		}
 		redactor := redact.New()
+		var appl agent.ApplianceHelper
+		if o.Appliance {
+			if m.helper, err = NewSyntheticHelper(o.ApplianceCapabilities, o.ApplianceCatalog); err != nil {
+				return summary, err
+			}
+			m.result.SealPublicKey = m.helper.PublicKey()
+			appl = m.helper
+		}
 		a, err := agent.New(agent.Options{
 			StateDir: stateDir, SpoolDir: filepath.Join(stateDir, "spool"), SpoolQuotaBytes: o.SpoolQuota,
 			Interval: o.Interval, IgnoreServerInterval: true,
@@ -207,7 +229,8 @@ func Run(ctx context.Context, o Options) (Summary, error) {
 			BootID:   simBootID(o.Seed + uint64(i)),
 			Logger:   o.Logger.With("machine", m.result.Hostname),
 			Redactor: redactor, StopAfterSamples: o.Samples,
-			Rand: rand.New(rand.NewPCG(o.Seed+uint64(i), 7)).Int64N,
+			Rand:      rand.New(rand.NewPCG(o.Seed+uint64(i), 7)).Int64N,
+			Appliance: appl,
 		})
 		if err != nil {
 			return summary, fmt.Errorf("%s: %w", m.result.Hostname, err)
@@ -252,6 +275,9 @@ func Run(ctx context.Context, o Options) (Summary, error) {
 		m.result.SpoolLeft = m.agent.SpoolLen()
 		m.result.FailedRequests = m.fault.failed.Load()
 		m.result.LostResponses = m.fault.lost.Load()
+		if m.helper != nil {
+			m.result.ApplianceRevision = m.helper.AppliedRevision()
+		}
 		if m.result.Error != "" {
 			failed = append(failed, m.result.Hostname+": "+m.result.Error)
 		}

@@ -1,0 +1,36 @@
+# HappyMining vectorizer (docs/appliance.md, section 11). The image is built on
+# the machine from /usr/share/happymining/vectorizer and is never pulled.
+# /config holds vectorizer.json and token, written by the helper.
+services:
+  vectorizer:
+    image: happymining/vectorizer:1
+    pull_policy: never
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: vectorizer
+    environment:
+      # The key of the cloud answer provider (ai.answer.api_key), when there is one.
+      - HM_ANSWER_API_KEY
+    volumes:
+      - ${HM_PLUGIN_DATA}/config:/config:ro
+      - state:/state
+      # rslave: a NAS share the helper mounts or unmounts while the container
+      # runs appears or disappears inside it too (the default, rprivate, would
+      # freeze the view taken at start). Read-only, and never shared back.
+      - type: bind
+        source: /srv/happymining/nas
+        target: /srv/happymining/nas
+        read_only: true
+        bind:
+          propagation: rslave
+    ports:
+      - "${HM_BIND}:8765:8765"
+    networks:
+      - hm-appliance
+
+volumes:
+  state:
+
+networks:
+  hm-appliance:
+    external: true

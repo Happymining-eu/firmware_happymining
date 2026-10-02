@@ -51,6 +51,9 @@ WEAK_DB_PASSWORDS = frozenset(
     }
 )
 VAST_API_HOST = "console.vast.ai"
+# The release-signing key published in appliance/testdata/release-vector.json.
+# Its private half is public: LIVE refuses to trust it.
+TEST_RELEASE_PUBLIC_KEY = "gHPPGWpeVAtEETEw6EPbGEVXn56F7ba5C0P2+Sxm5pQ="
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
@@ -133,13 +136,24 @@ class Settings(BaseSettings):
     payout_minimum: str = "1.00"
     payout_require_distinct_approver: bool = True
 
+    # --- appliance (docs/appliance.md) ---------------------------------------
+    # The plugin catalog the control plane offers. Empty: the catalog shipped
+    # with this code (appliance/catalog next to the api directory).
+    catalog_dir: str = ""
+    # Ed25519 public keys (base64 of 32 bytes) a firmware release must be
+    # signed with. Empty: no release can be published.
+    release_public_keys: CsvList = Field(default_factory=list)
+    release_max_bytes: int = Field(default=128 * 1024 * 1024, ge=1024, le=512 * 1024 * 1024)
+    # How long a remote-access grant may last when it has an expiry.
+    remote_access_max_hours: int = Field(default=90 * 24, ge=1, le=366 * 24)
+
     # --- worker -------------------------------------------------------------
     worker_tick_s: int = Field(default=30, ge=5)
     worker_machine_sync_interval_s: int = Field(default=600, ge=60)
     worker_earnings_import_interval_s: int = Field(default=21600, ge=600)
     worker_earnings_lookback_days: int = Field(default=14, ge=1, le=90)
 
-    @field_validator("allowed_hosts", "cors_allowed_origins", mode="before")
+    @field_validator("allowed_hosts", "cors_allowed_origins", "release_public_keys", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):
@@ -196,6 +210,10 @@ class Settings(BaseSettings):
         if "*" in self.cors_allowed_origins:
             out.append("HM_CORS_ALLOWED_ORIGINS must not contain * in LIVE mode")
         out.extend(_vast_url_problems(self.vast_base_url))
+        if TEST_RELEASE_PUBLIC_KEY in self.release_public_keys:
+            out.append(
+                "HM_RELEASE_PUBLIC_KEYS contains the published test key; anyone could sign a release with it"
+            )
         return out
 
     def validate_for_startup(self) -> None:

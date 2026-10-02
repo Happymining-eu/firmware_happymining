@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}Releases · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Firmware releases</h1>
+<p class="lead">Signed packages of HappyMining's agent, offered to machines by update channel. This updates HappyMining's own
+  software only: not the operating system, the kernel, the NVIDIA driver or Vast's software.</p>
+
+<h2>Signing keys this server trusts</h2>
+{% if key_problem %}
+  <p class="flash err">{{ key_problem }}</p>
+{% elif key_ids %}
+  <p>{% for k in key_ids %}<span class="pill mono">{{ k }}</span> {% endfor %}</p>
+  <p class="note">From <span class="mono">HM_RELEASE_PUBLIC_KEYS</span>. A release is offered and installable only while the key it was
+    signed with is listed. Machines check the signature again with the keys installed with their current package.</p>
+{% else %}
+  <p class="flash err">No release public key is configured (<span class="mono">HM_RELEASE_PUBLIC_KEYS</span>): nothing can be published.</p>
+{% endif %}
+
+<h2>Releases</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Version</th><th>Status</th><th>Channels</th><th>Package</th><th>Upgrades from</th><th>Signed with</th><th>Notes</th><th></th></tr></thead>
+    <tbody>
+    {% for r in releases %}
+      <tr>
+        <td class="mono">{{ r.version }}<div class="note">{{ r.created_at[:16] | replace("T", " ") }}</div></td>
+        <td>{{ m.status(r.status) }}{% if r.withdrawn_at %}<div class="note">withdrawn {{ r.withdrawn_at[:16] | replace("T", " ") }}</div>{% endif %}</td>
+        <td>{% if r.channels %}{{ r.channels | join(", ") }}{% else %}<span class="note">none</span>{% endif %}</td>
+        <td class="mono wrap">{{ r.filename }}<div class="note">{{ r.size }} bytes · sha256 {{ r.sha256[:16] }}…</div></td>
+        <td class="mono">{{ r.min_upgrade_from }}</td>
+        <td class="mono">{{ r.key_id }}</td>
+        <td class="wrap">{{ r.notes }}</td>
+        <td>
+          {% if role == "admin" and r.status == "ready" %}
+            <form class="inline" method="post" action="/admin/releases/{{ r.version }}/channels">
+              {{ m.csrf_field(csrf) }}
+              {% for c in channels %}
+                <label class="check"><input type="checkbox" name="channels" value="{{ c }}" {% if c in r.channels %}checked{% endif %}> {{ c }}</label>
+              {% endfor %}
+              <button class="secondary" type="submit">Set channels</button>
+            </form>
+            <form class="inline" method="post" action="/admin/releases/{{ r.version }}/withdraw">
+              {{ m.csrf_field(csrf) }}
+              <input name="reason" required maxlength="300" placeholder="reason" aria-label="Reason for withdrawing {{ r.version }}">
+              <button class="danger" type="submit">Withdraw</button>
+            </form>
+          {% elif r.status == "awaiting_artifact" %}
+            <span class="note">waiting for its package</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="note">No release yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if role == "admin" %}
+<h2>Publish a release</h2>
+<ol class="steps">
+  <li>On the release engineer's machine, with the signing key that never comes here:
+    <pre class="mono">api/.venv/bin/python scripts/release-sign.py manifest --deb happymining-agent_X.Y.Z_amd64.deb \
+    --version X.Y.Z --key &lt;private key&gt; --out &lt;directory&gt;</pre>
+    It writes <span class="mono">manifest.json</span> and <span class="mono">manifest.sig</span>.</li>
+  <li>Upload them here. The signature is checked against the keys above before anything is stored.
+    <form class="panel stack" method="post" action="/admin/releases" enctype="multipart/form-data">
+      {{ m.csrf_field(csrf) }}
+      <label>manifest.json <input type="file" name="manifest" required accept=".json,application/json"></label>
+      <label>manifest.sig <input type="file" name="signature_file" accept=".sig,text/plain"></label>
+      <label>or paste the content of manifest.sig <input name="signature" maxlength="128" spellcheck="false" autocomplete="off"></label>
+      <div><button type="submit">Upload the signed manifest</button></div>
+    </form>
+  </li>
+  <li>Upload the package itself to the JSON API, not through this page:
+    <pre class="mono">curl --fail -X PUT {{ api_base }}/releases/X.Y.Z/artifact \
+    -H "Authorization: Bearer &lt;session token&gt;" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary @happymining-agent_X.Y.Z_amd64.deb</pre>
+    <p class="note">Why: a form posted to this dashboard is limited to 1 MiB by the server's body-size limit, and a package is
+      far larger. <span class="mono">PUT /api/v1/releases/&lt;version&gt;/artifact</span> is the one route allowed a large body (up to
+      {{ max_bytes }} bytes, <span class="mono">HM_RELEASE_MAX_BYTES</span>); it reads the body as a stream, stops at the size the signed
+      manifest states, and stores nothing unless the size and the SHA-256 match it. The session token comes from
+      <span class="mono">POST /api/v1/auth/login</span> with your staff account.</p>
+  </li>
+  <li>Once the package is in (status <span class="mono">ready</span>), choose its channels above. A release can be withdrawn at any time;
+    updates not yet handed to a machine are then cancelled.</li>
+</ol>
+{% endif %}
+{% endblock %}

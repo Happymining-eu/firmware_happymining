@@ -59,6 +59,39 @@ class EnrollmentIn(Strict):
     machine_label: ShortStr = ""
     machine_id: uuid.UUID | None = None
     owned_since: date | None = None
+    # Who manages a machine registered by this request (default: company). An
+    # existing machine keeps what it has; PUT /machines/{id}/management changes it.
+    management: Literal["company", "customer"] | None = None
+
+
+# --- organisation users, machine management and remote access (docs/appliance.md, section 3)
+
+
+class OrgUserIn(Strict):
+    email: ShortStr
+    display_name: ShortStr = ""
+    org_role: Literal["org_admin", "org_operator", "org_viewer"]
+    password: Annotated[str, StringConstraints(min_length=12, max_length=1024)]
+    # Staff say which organisation; an organisation's own administrator leaves it out.
+    owner_id: uuid.UUID | None = None
+
+
+class OrgUserPatchIn(Strict):
+    org_role: Literal["org_admin", "org_operator", "org_viewer"] | None = None
+    is_active: bool | None = None
+    display_name: ShortStr | None = None
+
+
+class ManagementIn(Strict):
+    management: Literal["company", "customer"]
+
+
+class RemoteAccessGrantIn(Strict):
+    level: Literal["view", "manage"]
+    # Required, so that a grant without an end is always asked for explicitly
+    # (null). The upper bound is HM_REMOTE_ACCESS_MAX_HOURS, checked by the service.
+    expires_in_hours: Annotated[int, Field(ge=1, le=366 * 24)] | None
+    reason: Annotated[str, StringConstraints(max_length=300)] = ""
 
 
 class RevokeIn(Strict):
@@ -267,6 +300,11 @@ class HeartbeatIn(Lenient):
     boot_id: Annotated[str, StringConstraints(max_length=64)] = ""
     agent_version: Annotated[str, StringConstraints(max_length=40)] = ""
     samples: Annotated[list[Sample], Field(min_length=1, max_length=100)]
+    # What the machine says about its appliance state (docs/appliance.md, 6.1).
+    # Absent for an agent that does not know about it. Taken as it comes here,
+    # bounded by the device body limit, and cleaned by services/appliance.py
+    # (record_report) before anything is stored.
+    appliance: dict[str, Any] | None = None
 
 
 class AckIn(Strict):

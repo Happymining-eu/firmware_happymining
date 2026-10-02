@@ -801,7 +801,10 @@ def test_deactivating_a_user_ends_every_session_at_once_and_blocks_login(app, cl
 
 def test_deactivated_demo_account_cannot_use_the_demo_login(client, world):
     h = world.auth(world.user("admin"))
-    owner_user = world.user("owner", world.owner())
+    organisation = world.owner()
+    owner_user = world.user("owner", organisation)
+    # An organisation keeps one active administrator: the account switched off is not its only one.
+    world.user("owner", organisation)
     token = world.token(owner_user)
     assert client.post(f"/api/v1/users/{owner_user.id}/deactivate", headers=h).status_code == 200
     assert client.get("/api/v1/auth/me", headers=bearer(token)).status_code == 401

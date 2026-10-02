@@ -78,8 +78,16 @@ class World:
         return owner
 
     def user(
-        self, role: str, owner=None, email: str | None = None, *, demo: bool | None = None, password=None
+        self,
+        role: str,
+        owner=None,
+        email: str | None = None,
+        *,
+        demo: bool | None = None,
+        password=None,
+        org_role: str | None = None,
     ):
+        """``org_role`` applies to the owner role only; left out, an owner's user is an org_admin."""
         demo = self.settings.is_demo if demo is None else demo
         user = accounts.create_user(
             self.session,
@@ -89,6 +97,7 @@ class World:
             owner_id=owner.id if owner else None,
             is_demo=demo,
             password=password,
+            org_role=org_role,
         )
         self.commit()
         return user

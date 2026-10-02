@@ -1,0 +1,174 @@
+{#- Pieces of the appliance page (appliance.html). No script and no inline style or handler:
+    the Content-Security-Policy forbids them. Secret fields are sealed by /static/seal.js. -#}
+
+{% macro state(value) -%}
+  {%- set good = ("running", "mounted", "ok", "applied", "idle", "installed", "cloud") -%}
+  {%- set bad = ("error", "blocked", "rejected", "unreadable", "missing", "not_in_catalog", "failed", "rolled_back", "no_key") -%}
+  {%- set stale = ("starting", "stopped", "partial", "pending", "disabled", "never", "downloading", "installing", "skipped", "unknown", "unmounted", "local") -%}
+  {%- if value is none or value == "" -%}<span class="pill">not reported</span>
+  {%- else -%}<span class="pill {% if value in good %}good{% elif value in bad %}bad{% elif value in stale %}stale{% endif %}">{{ value | replace("_", " ") }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro revision(a) -%}<input type="hidden" name="revision" value="{{ a.revision }}">{%- endmacro %}
+
+{#- One field of a plugin's settings, generated from its catalog entry. -#}
+{% macro setting_field(f) -%}
+  {%- if f.type == "bool" -%}
+    <label class="check"><input type="checkbox" name="{{ f.name }}" value="true" {% if f.value %}checked{% endif %}> {{ f.label }}</label>
+  {%- elif f.type == "int" -%}
+    <label>{{ f.label }} <span class="note">{{ f.min }} to {{ f.max }}</span>
+      <input type="number" name="{{ f.name }}" value="{{ f.value }}" min="{{ f.min }}" max="{{ f.max }}" step="1" required></label>
+  {%- elif f.type == "enum" -%}
+    <label>{{ f.label }}
+      <select name="{{ f.name }}">{% for v in f["values"] %}<option value="{{ v }}" {% if v == f.value %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+  {%- elif f.type == "string" -%}
+    <label>{{ f.label }} <input name="{{ f.name }}" value="{{ f.value }}" maxlength="{{ f.max_len }}" spellcheck="false"></label>
+  {%- elif f.type == "string_list" -%}
+    <label>{{ f.label }} <span class="note">one per line, at most {{ f.max_items }}</span>
+      <textarea name="{{ f.name }}" rows="3" spellcheck="false">{{ f.text }}</textarea></label>
+  {%- endif -%}
+{%- endmacro %}
+
+{#- A secret. The password field has NO name: only its sealed form, in the hidden input
+    named ``target``, is ever submitted, and only once /static/seal.js has sealed it for
+    the machine under ``seal_name`` (or under ``template`` with {id} taken from the field
+    ``from_field`` of the same form). -#}
+{% macro secret_field(a, label, target, seal_name="", template="", from_field="", stored=False, reported=none) -%}
+  <label>{{ label }}
+    <input type="password" autocomplete="new-password" spellcheck="false" data-seal-target="{{ target }}"
+      {%- if seal_name %} data-seal-name="{{ seal_name }}"{% else %} data-seal-name-template="{{ template }}" data-seal-name-field="{{ from_field }}"{% endif %}
+      {%- if not a.seal_key %} disabled{% endif %}
+      placeholder="{% if not a.seal_key %}the machine has no sealing key yet{% elif stored %}stored; leave empty to keep it{% else %}not set{% endif %}"></label>
+  <input type="hidden" name="{{ target }}" value="">
+  <span class="note secret-note">Sealed in this browser for this machine only, as <span class="mono">{{ seal_name or template }}</span>.
+    HappyMining stores it and cannot read it.{% if reported %} The machine reports it {{ state(reported) }}.{% endif %}</span>
+{%- endmacro %}
+
+{% macro seal_error() -%}<p class="flash err" data-seal-error hidden role="alert"></p>{%- endmacro %}
+
+{% macro no_key_note(a) -%}
+  {%- if not a.seal_key -%}
+    <p class="note">Secret fields are disabled: the machine has not reported its sealing key yet. A secret is sealed in
+      your browser for a key only the machine holds, so it can only be entered once the machine's agent has reported it.</p>
+  {%- endif -%}
+{%- endmacro %}
+
+{#- The form that adds or configures a plugin. -#}
+{% macro plugin_form(a, card, csrf) -%}
+  <form class="stack plugin-form" method="post" action="/machines/{{ a.machine_id }}/appliance/plugins/{{ card.id }}"
+    {%- if a.may_admin and card.secrets %} data-seal-key="{{ a.seal_key }}"{% endif %}>
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {{ revision(a) }}
+    <label class="check"><input type="checkbox" name="enabled" value="true" {% if card.enabled %}checked{% endif %}> Enabled</label>
+    {% for f in card.fields %}{{ setting_field(f) }}{% endfor %}
+    {% if card.secrets %}
+      {% if a.may_admin %}
+        {% for s in card.secrets %}
+          {{ secret_field(a, s.label ~ (" (required)" if s.required else " (optional)"), s.field, seal_name=s.name, stored=s.stored, reported=s.state) }}
+          {% if s.stored and not s.required %}
+            <label class="check"><input type="checkbox" name="{{ s.remove_field }}" value="true"> Remove the stored {{ s.label | lower }}</label>
+          {% endif %}
+        {% endfor %}
+        {{ no_key_note(a) }}
+        {{ seal_error() }}
+      {% else %}
+        <p class="note">Its secrets ({% for s in card.secrets %}{{ s.label }}{% if not loop.last %}, {% endif %}{% endfor %}) are set by an administrator of the organisation.</p>
+      {% endif %}
+    {% endif %}
+    <div><button type="submit">{% if card.configured %}Save {{ card.entry.name if card.entry else card.id }}{% else %}Add {{ card.entry.name }}{% endif %}</button></div>
+  </form>
+{%- endmacro %}
+
+{#- The form that adds or replaces a NAS entry (section 4.3: every field). ``entry`` is none to add one. -#}
+{% macro nas_form(a, entry, csrf) -%}
+  {%- set e = entry or {} -%}
+  <form class="stack" method="post" action="/machines/{{ a.machine_id }}/appliance/nas" data-seal-key="{{ a.seal_key }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {{ revision(a) }}
+    {% if entry %}
+      <input type="hidden" name="nas_id" value="{{ entry.id }}">
+    {% else %}
+      <label>Id <span class="note">a lower-case letter, then letters, digits or -; used in the mount path /srv/happymining/nas/&lt;id&gt;</span>
+        <input name="nas_id" required maxlength="31" spellcheck="false" autocomplete="off"></label>
+    {% endif %}
+    <div class="fields">
+      <label>Kind
+        <select name="kind">
+          <option value="smb" {% if e.get("kind", "smb") == "smb" %}selected{% endif %}>SMB (Windows share, Synology, QNAP…)</option>
+          <option value="nfs" {% if e.get("kind") == "nfs" %}selected{% endif %}>NFS</option>
+        </select></label>
+      <label>Host <span class="note">host name or IPv4 address</span>
+        <input name="host" value="{{ e.get('host', '') }}" required maxlength="253" spellcheck="false"></label>
+      <label>Access
+        <select name="access">
+          <option value="read" {% if e.get("access", "read") == "read" %}selected{% endif %}>read: mounted read-only, can be indexed</option>
+          <option value="write" {% if e.get("access") == "write" %}selected{% endif %}>write: mounted read-write, for backups only</option>
+        </select></label>
+      <label>Sub-path <span class="note">inside the share; empty for its root</span>
+        <input name="subpath" value="{{ e.get('subpath', '') }}" maxlength="512" spellcheck="false"></label>
+    </div>
+    <fieldset class="scopes">
+      <legend>SMB only</legend>
+      <div class="fields">
+        <label>Share <input name="share" value="{{ e.get('share', '') }}" maxlength="80" spellcheck="false"></label>
+        <label>User name <span class="note">empty for guest access</span>
+          <input name="username" value="{{ e.get('username', '') }}" maxlength="64" spellcheck="false" autocomplete="off"></label>
+        <label>Domain <span class="note">optional</span>
+          <input name="domain" value="{{ e.get('domain', '') }}" maxlength="64" spellcheck="false"></label>
+      </div>
+      {% if entry %}
+        {{ secret_field(a, "Password", a.nas_secret_field, seal_name=entry.secret_name, stored=entry.secret_stored, reported=entry.secret_state) }}
+      {% else %}
+        {{ secret_field(a, "Password", a.nas_secret_field, template=a.nas_secret_template, from_field="nas_id") }}
+      {% endif %}
+      <p class="note">A user name needs its password; guest access has none.</p>
+    </fieldset>
+    <fieldset class="scopes">
+      <legend>NFS only</legend>
+      <label>Export <span class="note">absolute path, such as /volume1/backup</span>
+        <input name="export" value="{{ e.get('export', '') }}" maxlength="255" spellcheck="false"></label>
+    </fieldset>
+    {{ no_key_note(a) }}
+    {{ seal_error() }}
+    <div><button type="submit">{% if entry %}Save {{ entry.id }}{% else %}Add the NAS entry{% endif %}</button></div>
+    <p class="note">Mounted with fixed options (read-only or read-write, nosuid, nodev, noexec); nothing here can add a mount option.</p>
+  </form>
+{%- endmacro %}
+
+{#- A schedule form. ``entry`` is none to add one. -#}
+{% macro schedule_form(a, entry, csrf) -%}
+  {%- set e = entry or {} -%}
+  <form class="stack" method="post" action="/machines/{{ a.machine_id }}/appliance/schedules">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {{ revision(a) }}
+    {% if entry %}
+      <input type="hidden" name="schedule_id" value="{{ entry.id }}">
+    {% else %}
+      <label>Id <input name="schedule_id" required maxlength="31" spellcheck="false" autocomplete="off" placeholder="nightly-sync"></label>
+    {% endif %}
+    <div class="fields">
+      <label>Job
+        <select name="job">{% for j in a.jobs %}<option value="{{ j }}" {% if e.get("job") == j %}selected{% endif %}>{{ j | replace("_", " ") }}: {{ a.job_help[j] }}</option>{% endfor %}</select></label>
+      <label>Plugin <span class="note">for plugin restart only</span>
+        <select name="plugin"><option value="">—</option>{% for p in a.plugins %}<option value="{{ p.id }}" {% if e.get("plugin") == p.id %}selected{% endif %}>{{ p.id }}</option>{% endfor %}</select></label>
+      <label>Every
+        <select name="every">{% for v in a.everies %}<option value="{{ v }}" {% if e.get("every", "daily") == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Weekday <span class="note">weekly only</span>
+        <select name="weekday"><option value="">—</option>{% for d in a.weekdays %}<option value="{{ loop.index0 }}" {% if e.get("weekday") == loop.index0 %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></label>
+      <label>Hour <span class="note">daily and weekly</span>
+        <input type="number" name="hour" min="0" max="23" step="1" value="{{ e.get('hour', '') }}"></label>
+      <label>Minute <input type="number" name="minute" min="0" max="59" step="1" required value="{{ e.get('minute', 0) }}"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="enabled" value="true" {% if e.get("enabled", True) %}checked{% endif %}> Enabled</label>
+    <div><button type="submit">{% if entry %}Save {{ entry.id }}{% else %}Add the schedule{% endif %}</button></div>
+  </form>
+{%- endmacro %}
+
+{% macro remove_form(a, action, label, csrf) -%}
+  <form class="inline" method="post" action="{{ action }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    {{ revision(a) }}
+    <button class="danger" type="submit">{{ label }}</button>
+  </form>
+{%- endmacro %}

@@ -9,9 +9,13 @@ with a PostgreSQL ledger, and an owner/admin dashboard. It is not a renter
 marketplace, it does not replace Vast's host daemon, it does not proxy AI
 workloads, and it does not flash GPU firmware.
 
-**Status: a working DEMO, not a production system.** Everything runs end to
-end with synthetic data. The LIVE path exists and is guarded, and has never
-been run against Vast, a real GPU machine or a bank. Read
+**Status: a working DEMO, not a production system.** In the last complete
+run (commit `c1c9c6d`) everything ran end to end with synthetic data. The
+DEMO is deployed on the Hostinger VPS at commit `d0f84f9`, behind basic
+authentication. The LIVE path exists and is guarded, and has never been run
+against Vast, a real GPU machine or a bank.
+The appliance (below) is built on top of that, not committed, not deployed,
+and its database tests have not run against the final code. Read
 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) and
 [`docs/limitations.md`](docs/limitations.md) before relying on anything.
 
@@ -26,7 +30,8 @@ been run against Vast, a real GPU machine or a bank. Read
 | `os/` | Installer scripts, Ubuntu autoinstall seeds, ISO build, QEMU smoke test, release signing |
 | `deploy/` | Docker Compose: stand-alone (Caddy) and for a host with Traefik (`deploy/hostinger/`) |
 | `integrations/` | Connectors for other software. `integrations/molehash/`: the client Mole Hash uses to manage the AI servers |
-| `tests/` | `tests/api` against real PostgreSQL, `tests/os` for the installer tooling; Go tests sit next to the Go code |
+| `appliance/` | The appliance's plugin catalog, the NAS vectorizer, and test fixtures shared by the Python and Go code |
+| `tests/` | `tests/api` against real PostgreSQL, `tests/os` for the installer tooling, `tests/appliance` for the catalog, the vectorizer and the sealing script; Go tests sit next to the Go code |
 | `docs/` | Architecture, integration evidence, agent protocol, ledger, operations, threat model, trust chain, limitations |
 
 ## Two modes
@@ -70,11 +75,33 @@ Mole Hash already manages the ASIC miners. The integration API lets it show
 and manage the AI servers too: an admin creates an API client with chosen
 scopes (dashboard → Integrations), and Mole Hash calls
 `/api/v1/integration/...` with that token. It can read the fleet, telemetry,
-operations and earnings, and request the same typed operations an admin can,
-through the same rental-protection gate. It cannot move money. The contract is
+operations, earnings and (with `appliance:read`) a machine's appliance
+state, and request the same typed operations an admin can, through the same
+rental-protection gate; on a machine its owner manages, only under the
+owner's remote-access grant. It cannot move money or change the appliance.
+The contract is
 in [`docs/integration-api.md`](docs/integration-api.md), a Python client in
 [`integrations/molehash/`](integrations/molehash/). The Mole Hash side itself
 is not wired yet.
+
+## The appliance: using the machine for its owner
+
+**Built, not committed, never run on a real machine.** A machine can be in
+one of three modes: `vast` (Vast hosting, the default; no plugin runs),
+`private_ai` (the owner runs local AI software from a fixed catalog: Ollama,
+Qdrant, Open WebUI, OpenClaw, Hermes Agent and HappyMining's vectorizer) or
+`vectorize` (the machine only indexes the owner's NAS shares). It adds NAS
+mounts, a searchable index of the shares, encrypted backups whose key never
+leaves the machine, signed firmware updates with automatic rollback,
+organisation roles for the owner's people, and remote-access grants without
+which HappyMining cannot see or change a machine its owner manages.
+
+The cloud names what should run; the machine holds every definition. Secrets
+are sealed in the browser for one machine. Every privileged step is behind a
+switch in a root-owned file on the machine, all off as packaged, and leaving
+`vast` mode passes the rental-protection gate (in LIVE it always blocks).
+Contract: [`docs/appliance.md`](docs/appliance.md). What has not run:
+[`docs/limitations.md`](docs/limitations.md), "The appliance".
 
 ## Deploy
 
@@ -91,6 +118,7 @@ from this repository at a pinned commit.
 | [`docs/integration-evidence.md`](docs/integration-evidence.md) | What is confirmed about Vast's API and terms, from primary sources, and what is not |
 | [`docs/agent-protocol.md`](docs/agent-protocol.md) | The contract between the agent and the API |
 | [`docs/integration-api.md`](docs/integration-api.md) | The API other software (Mole Hash) uses to see and manage the AI servers |
+| [`docs/appliance.md`](docs/appliance.md) | Modes, plugins, NAS, index, backups, firmware updates, roles and remote access: the contract and what was decided while building it |
 | [`docs/ledger.md`](docs/ledger.md) | Accounts, entries, imports, reconciliation, settlement |
 | [`docs/operations.md`](docs/operations.md) | Running it: health, backups, incidents, secrets |
 | [`docs/threat-model.md`](docs/threat-model.md) | Renters, agents, owners, central compromise, supply chain |

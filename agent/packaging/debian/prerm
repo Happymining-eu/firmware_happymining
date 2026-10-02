@@ -1,7 +1,9 @@
 #!/bin/sh
 # prerm of happymining-agent: stop the agent; on removal also disable the
-# units. Nothing else on the machine is stopped or changed: Docker, the Vast
-# host software and renter workloads are not touched.
+# units and disarm the update guard (which would otherwise reinstall the
+# previous package after the removal). Nothing else on the machine is stopped
+# or changed: Docker, the Vast host software, renter workloads, the
+# appliance's plugins and NAS mounts are not touched.
 set -e
 
 UNITS="happymining-agent.service happymining-helper.socket happymining-firstboot.service"
@@ -11,6 +13,7 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             if [ -d /run/systemd/system ]; then
                 systemctl stop happymining-agent.service happymining-helper.socket || true
+                systemctl stop happymining-update-guard.timer || true
             fi
             # shellcheck disable=SC2086
             systemctl disable $UNITS >/dev/null 2>&1 || true
@@ -18,7 +21,8 @@ case "$1" in
         ;;
     upgrade)
         # The new version's postinst starts the agent again. The state
-        # directory is not touched.
+        # directory is not touched. The update guard stays armed: it is what
+        # rolls a failed update back.
         if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
             systemctl stop happymining-agent.service || true
         fi

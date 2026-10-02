@@ -24,6 +24,7 @@ import (
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/enroll"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/execx"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/fsx"
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/helper"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/identity"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/pairing"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/preflight"
@@ -56,6 +57,14 @@ type Env struct {
 	PreflightEnv func(api *client.Client, offline bool) preflight.Env
 	// Root is prepended to the paths ctl reads from the host (tests).
 	Root string
+	// Geteuid returns the effective uid (nil: os.Geteuid).
+	Geteuid func() int
+	// ExecHelper runs the root helper with the terminal attached and returns
+	// its exit status (nil: the real one).
+	ExecHelper func(path string, args []string) (int, error)
+	// HelperStatus asks the helper socket for the appliance state (nil: the
+	// real one).
+	HelperStatus func(ctx context.Context, socket string) (helper.Response, error)
 }
 
 // DefaultEnv returns the Env of a real invocation.
@@ -87,6 +96,8 @@ Commands:
   status             show pairing, heartbeat, spool, API and service status
   unpair             delete the local device credential
   preflight          read-only host checks (PASS / WARN / FAIL)
+  appliance          appliance state; local secrets, plugin data, vectorizer token (root)
+  backup             create the backup key, restore an archive (root)
   vast-enroll-help   how to install the official Vast host software by hand
   version            print the version
 
@@ -136,6 +147,10 @@ func Run(args []string, env Env) int {
 		return a.unpair(rest[1:])
 	case "preflight":
 		return a.preflight(rest[1:])
+	case "appliance":
+		return a.appliance(rest[1:])
+	case "backup":
+		return a.backup(rest[1:])
 	case "vast-enroll-help":
 		fmt.Fprint(env.Stdout, VastEnrollHelp)
 		return ExitOK

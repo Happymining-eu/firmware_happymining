@@ -18,7 +18,7 @@ from ..audit import Actor, audit
 from ..config import Settings
 from ..db import lock_row
 from ..errors import Conflict, FeatureDisabled, Forbidden, InvalidRequest, NotFound, Unauthorized
-from ..models import ROLES, Owner, User, UserSession, utcnow
+from ..models import ORG_ROLES, ROLES, Owner, User, UserSession, utcnow
 from ..security import (
     decrypt_text,
     encrypt_text,
@@ -52,6 +52,16 @@ class Principal:
     @property
     def is_admin(self) -> bool:
         return self.user.role == "admin"
+
+    @property
+    def is_staff(self) -> bool:
+        """HappyMining's own people: admins and auditors. Not an owner's user."""
+        return self.user.role in ("admin", "auditor")
+
+    @property
+    def org_role(self) -> str | None:
+        """The role inside the owner's organisation; None for staff."""
+        return self.user.org_role
 
     def actor(self, ip: str = "") -> Actor:
         return Actor("user", str(self.user.id), ip)
@@ -105,12 +115,20 @@ def create_user(
     password: str | None = None,
     owner_id: uuid.UUID | None = None,
     is_demo: bool = False,
+    org_role: str | None = None,
 ) -> User:
     email = normalise_email(email)
     if role not in ROLES:
         raise InvalidRequest("role must be one of: " + ", ".join(ROLES))
     if (role == "owner") != (owner_id is not None):
         raise InvalidRequest("owner_id is required for the owner role and not allowed for other roles")
+    if role == "owner":
+        # The first users of an organisation are created by staff and run it.
+        org_role = org_role or "org_admin"
+        if org_role not in ORG_ROLES:
+            raise InvalidRequest("org_role must be one of: " + ", ".join(ORG_ROLES))
+    elif org_role is not None:
+        raise InvalidRequest("org_role only applies to the owner role")
     if owner_id and not db.get(Owner, owner_id):
         raise NotFound("owner not found")
     if password is not None and len(password) < MIN_PASSWORD_LENGTH:
@@ -122,6 +140,7 @@ def create_user(
         role=role,
         display_name=display_name.strip()[:200],
         owner_id=owner_id,
+        org_role=org_role,
         password_hash=hash_password(password) if password else None,
         is_demo=is_demo,
     )
@@ -134,7 +153,7 @@ def create_user(
         object_type="user",
         object_id=user.id,
         owner_id=owner_id,
-        details={"email": email, "role": role, "demo": is_demo},
+        details={"email": email, "role": role, "org_role": org_role, "demo": is_demo},
     )
     return user
 

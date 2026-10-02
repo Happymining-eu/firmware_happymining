@@ -32,6 +32,20 @@
     <div class="sub">Max temperature {% if latest.gpu_temp_max is none %}n/a{% else %}{{ latest.gpu_temp_max }} °C{% endif %}</div>
   </div>
   {% endif %}
+  {# The appliance page (dashboard_appliance.py): the owner's people, and staff who may view it (section 3). #}
+  {% if role == "owner" or (remote and remote.staff_access != "none") %}
+  <div class="tile">
+    <div class="label">Appliance</div>
+    <div class="value"><a href="/machines/{{ machine.id }}/appliance">Open the appliance</a></div>
+    <div class="sub">Mode, plugins, NAS, vectorization, backups, schedules, firmware updates</div>
+  </div>
+  {% elif role in ("admin", "auditor") %}
+  <div class="tile">
+    <div class="label">Appliance</div>
+    <div class="value"><span class="pill stale">no access</span></div>
+    <div class="sub">Its configuration is visible to HappyMining only with a remote-access grant</div>
+  </div>
+  {% endif %}
 </div>
 
 {% if machine.provider and machine.provider.state_detail %}<p class="note">{{ machine.provider.state_detail }}</p>{% endif %}
@@ -88,8 +102,104 @@
   <p class="note">No telemetry received yet.</p>
 {% endif %}
 
+{% if remote %}
+<h2 id="remote-access">Remote access</h2>
+<div class="two">
+  <div class="panel">
+    <dl class="kv">
+      <dt>Managed by</dt>
+      <dd>{% if remote.management == "company" %}<span class="pill good">HappyMining</span>{% else %}<span class="pill">the customer</span>{% endif %}</dd>
+      <dt>HappyMining's access now</dt>
+      <dd>
+        {% if remote.staff_access == "manage" %}<span class="pill good">manage</span>
+        {% elif remote.staff_access == "view" %}<span class="pill stale">view only</span>
+        {% else %}<span class="pill bad">none</span>{% endif %}
+      </dd>
+    </dl>
+    {% if remote.management == "company" %}
+      <p class="note">HappyMining operates this machine: its staff may read and change its configuration and request operations.</p>
+    {% else %}
+      <p class="note">HappyMining staff still see connection state, hardware, telemetry and the operation history.
+        They read or change the configuration and request operations only with a grant from the owner's organisation.</p>
+    {% endif %}
+    {% if remote.management == "company" and (is_org_admin or role == "admin") %}
+      <form class="inline" method="post" action="/machines/{{ machine.id }}/management">
+        {{ m.csrf_field(csrf) }}
+        <input type="hidden" name="management" value="customer">
+        <button class="secondary" type="submit">Hand management to the customer</button>
+      </form>
+      {% if role == "admin" %}<p class="note">Only the owner's organisation can hand it back. Operations you have queued are cancelled unless a manage grant is in force.</p>{% endif %}
+    {% elif remote.management == "customer" and is_org_admin %}
+      <form class="inline" method="post" action="/machines/{{ machine.id }}/management">
+        {{ m.csrf_field(csrf) }}
+        <input type="hidden" name="management" value="company">
+        <button class="secondary" type="submit">Let HappyMining manage this machine</button>
+      </form>
+    {% endif %}
+  </div>
+  {% if is_org_admin %}
+  <form class="panel" method="post" action="/machines/{{ machine.id }}/remote-access/grants">
+    {{ m.csrf_field(csrf) }}
+    <div class="fields">
+      <label>Let HappyMining
+        <select name="level" required>
+          <option value="view">view the configuration and state</option>
+          <option value="manage">manage: view, change, request operations</option>
+        </select>
+      </label>
+      <label>For
+        <select name="expires_in_hours" required>
+          {% for hours, label in grant_durations %}<option value="{{ hours }}" {% if hours == 24 %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          <option value="never">until revoked</option>
+        </select>
+      </label>
+      <label>Reason <input name="reason" maxlength="300" placeholder="support request, installation…"></label>
+    </div>
+    <button type="submit">Grant remote access</button>
+    <p class="note">You can revoke it at any time. Granting, every change made with it and revoking are recorded.
+      {% if remote.management == "company" %}While HappyMining manages the machine a grant changes nothing; it counts once the machine is managed by the customer.{% endif %}</p>
+  </form>
+  {% endif %}
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Granted</th><th>Level</th><th>Until</th><th>By</th><th>Reason</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for g in remote.grants + remote.past_grants %}
+      <tr>
+        <td>{{ g.created_at[:16] | replace("T", " ") }}</td>
+        <td>{{ g.level }}</td>
+        <td>{% if g.revoked_at %}revoked {{ g.revoked_at[:16] | replace("T", " ") }}{% elif g.expires_at %}{{ g.expires_at[:16] | replace("T", " ") }}{% else %}<span class="note">until revoked</span>{% endif %}</td>
+        <td>{{ grant_users.get(g.granted_by, "—") }}</td>
+        <td class="wrap">{{ g.reason }}</td>
+        <td>
+          {% if g.state == "active" %}<span class="pill good">active</span>
+          {% elif g.state == "previous_owner" %}<span class="pill stale">previous owner</span>
+          {% else %}<span class="pill">{{ g.state }}</span>{% endif %}
+        </td>
+        <td>
+          {% if g.state == "active" and (is_org_admin or role == "admin") %}
+          <form class="inline" method="post" action="/machines/{{ machine.id }}/remote-access/grants/{{ g.id }}/revoke">
+            {{ m.csrf_field(csrf) }}
+            <button class="secondary" type="submit">{% if is_org_admin %}Revoke{% else %}Give up{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="note">No remote access has been granted.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
 <h2>Operations</h2>
-{% if role == "admin" and machine.connection != "unpaired" %}
+{% if role == "admin" and not staff_may_manage %}
+  <p class="flash err">This machine is managed by its owner. Operations cannot be requested from here
+    {% if remote and remote.staff_access == "view" %}with the current grant (view only){% else %}without a remote-access grant{% endif %}:
+    an administrator of the owner's organisation has to grant HappyMining the manage level first.</p>
+{% elif role == "admin" and machine.connection != "unpaired" %}
   <form class="row" method="post" action="/machines/{{ machine.id }}/operations">
     {{ m.csrf_field(csrf) }}
     <label>Request a read-only operation

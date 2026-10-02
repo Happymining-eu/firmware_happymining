@@ -3,6 +3,7 @@
 {% block title %}{{ owner.display_name }} · HappyMining OS{% endblock %}
 {% block content %}
 <h1>{{ owner.display_name }} {{ m.synthetic(owner.is_synthetic) }}</h1>
+{% if show_money %}
 <p class="lead">Earnings days {{ statement.period.start }} to {{ statement.period.end }} (UTC), amounts in USD.</p>
 
 <div class="grid">
@@ -56,6 +57,9 @@
     <p class="note">{{ statement.disclaimer }}</p>
   </div>
 </div>
+{% else %}
+<p class="lead">Earnings and settlements are visible to your organisation's administrators.</p>
+{% endif %}
 
 <h2>Machines</h2>
 <div class="table-wrap">
@@ -76,6 +80,7 @@
   </table>
 </div>
 
+{% if show_money %}
 <h2>Payout history</h2>
 <div class="table-wrap">
   <table>
@@ -94,4 +99,5 @@
     </tbody>
   </table>
 </div>
+{% endif %}
 {% endblock %}

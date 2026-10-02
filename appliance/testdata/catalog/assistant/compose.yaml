@@ -1,0 +1,6 @@
+services:
+  assistant:
+    image: ghcr.io/example/assistant:3.0.0@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: assistant

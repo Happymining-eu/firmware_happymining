@@ -1,0 +1,15 @@
+[Unit]
+Description=HappyMining: check 10 minutes after an installation that the new agent came back
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+
+[Timer]
+# Armed by `hm-helper install-staged` with `systemctl restart` (which resets
+# the countdown). It does not survive a reboot; the helper's status then
+# starts the guard itself once the installation is old enough.
+OnActiveSec=10min
+AccuracySec=30s
+RemainAfterElapse=no
+Unit=happymining-update-guard.service
+
+# No [Install] section: the timer is never enabled, only armed after an
+# installation.

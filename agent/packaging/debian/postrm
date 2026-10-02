@@ -1,7 +1,14 @@
 #!/bin/sh
 # postrm of happymining-agent. `remove` keeps the state (credential, spool,
-# identity); only `purge` deletes it. The happymining system user is left in
-# place: removing system users on purge can orphan files elsewhere.
+# identity); only `purge` deletes the agent's state directory. The
+# happymining system user is left in place: removing system users on purge
+# can orphan files elsewhere.
+#
+# Even `purge` leaves the appliance's data where it is: the helper's keys in
+# /var/lib/happymining-helper (without the backup key no archive can be
+# restored), the plugins' data in /var/lib/happymining-plugins and
+# /srv/happymining, where NAS shares may still be mounted. Deleting those is
+# a deliberate act by the machine's administrator.
 set -e
 
 ROOT="${DPKG_ROOT:-}"

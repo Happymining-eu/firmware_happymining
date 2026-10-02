@@ -125,6 +125,47 @@ func TestParseHelper(t *testing.T) {
 	}
 }
 
+func TestParseHelperApplianceSwitches(t *testing.T) {
+	// Each key sets exactly its own field.
+	keys := map[string]func(Helper) bool{
+		"ALLOW_PLUGINS":                 func(h Helper) bool { return h.AllowPlugins },
+		"ALLOW_NAS":                     func(h Helper) bool { return h.AllowNAS },
+		"ALLOW_BACKUP":                  func(h Helper) bool { return h.AllowBackup },
+		"ALLOW_UPDATE":                  func(h Helper) bool { return h.AllowUpdate },
+		"ALLOW_UNPINNED_IMAGES":         func(h Helper) bool { return h.AllowUnpinnedImages },
+		"ALLOW_FOREIGN_CONTAINERS":      func(h Helper) bool { return h.AllowForeignContainers },
+		"ALLOW_UPDATE_WITHOUT_ROLLBACK": func(h Helper) bool { return h.AllowUpdateWithoutRollback },
+		"ALLOW_REBOOT":                  func(h Helper) bool { return h.AllowReboot },
+		"ALLOW_RESTART_VAST_DAEMON":     func(h Helper) bool { return h.AllowRestartVastDaemon },
+	}
+	for key := range keys {
+		h, err := ParseHelper(strings.NewReader(key + "=1\n"))
+		if err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		for other, get := range keys {
+			if get(h) != (other == key) {
+				t.Errorf("%s=1 sets %s to %v", key, other, get(h))
+			}
+		}
+		h, err = ParseHelper(strings.NewReader(key + "=0\n"))
+		if err != nil || h != (Helper{}) {
+			t.Errorf("%s=0: %+v %v", key, h, err)
+		}
+		for _, bad := range []string{key + "=true\n", key + "=yes\n", key + "=2\n", key + "=1\n" + key + "=1\n", key + " = 1\n"} {
+			if _, err := ParseHelper(strings.NewReader(bad)); err == nil {
+				t.Errorf("expected an error for %q", bad)
+			}
+		}
+	}
+	// Close relatives of the real keys are unknown keys, not switches.
+	for _, bad := range []string{"ALLOW_PLUGIN=1\n", "ALLOW_NAS_MOUNT=1\n", "ALLOW_UPDATES=1\n", "allow_plugins=1\n", "ALLOW_SHELL_PLUGINS=1\n"} {
+		if _, err := ParseHelper(strings.NewReader(bad)); err == nil {
+			t.Errorf("expected an error for %q", bad)
+		}
+	}
+}
+
 func TestVastKeyFileIsRejectedAsMachineIDFile(t *testing.T) {
 	if !IsVastSecretFile("/var/lib/vastai_kaalia/machine_id") || !IsVastSecretFile("/x/vastai_kaalia/./machine_id") {
 		t.Fatal("the Vast key file must be recognised")

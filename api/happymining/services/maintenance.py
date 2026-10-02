@@ -40,6 +40,13 @@ from ..models import Machine, ProviderMachine, utcnow
 from ..providers.base import Provider, ProviderError, RentalState
 
 DISRUPTIVE_TYPES = frozenset({"restart_vast_daemon", "reboot", "run_benchmark", "apply_hardware_profile"})
+# Taking a machine out of Vast hosting so that its owner's plugins may run
+# (docs/appliance.md, section 2). It is not an operation sent to a device, so
+# it is not in DISRUPTIVE_TYPES, which also classifies operation types; but it
+# can hurt a renter just the same and passes the same gate.
+LEAVE_VAST_MODE = "leave_vast_mode"
+# Everything the gate decides on. Anything else is not disruptive.
+GATED_ACTIONS = DISRUPTIVE_TYPES | {LEAVE_VAST_MODE}
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,12 @@ def record_rental_state(db: Session, pm: ProviderMachine, state: RentalState) ->
 def evaluate(
     db: Session, settings: Settings, provider: Provider | None, machine: Machine, op_type: str
 ) -> SafetyDecision:
-    """Decide whether ``op_type`` may be sent to ``machine`` right now."""
-    if op_type not in DISRUPTIVE_TYPES:
+    """Decide whether ``op_type`` may be sent to ``machine`` right now.
+
+    ``op_type`` is an operation type or one of the other gated actions
+    (``LEAVE_VAST_MODE``).
+    """
+    if op_type not in GATED_ACTIONS:
         return SafetyDecision(True, checks={"disruptive": False})
 
     checks: dict[str, Any] = {"disruptive": True, "evaluated_at": utcnow().isoformat()}

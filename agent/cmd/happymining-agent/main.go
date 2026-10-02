@@ -80,6 +80,10 @@ func run() int {
 	}
 
 	requirements := preflight.EmbeddedRequirements()
+	// One client for both: the two typed actions of agent 0.1.0 and the
+	// appliance actions (docs/appliance.md). The helper decides with its own
+	// switches what it does; with none on it only reports.
+	privileged := &helper.Client{SocketPath: cfg.HelperSocket}
 	a, err := agent.New(agent.Options{
 		StateDir:        cfg.StateDir,
 		SpoolDir:        cfg.SpoolDir,
@@ -95,7 +99,8 @@ func run() int {
 		Logger:          log,
 		Redactor:        redactor,
 		OpsEnabled:      cfg.OpsEnabled,
-		Helper:          &helper.Client{SocketPath: cfg.HelperSocket},
+		Helper:          privileged,
+		Appliance:       privileged,
 		Preflight: func(ctx context.Context) (string, any, error) {
 			report := preflight.Run(ctx, preflight.HostEnv(api, false), requirements)
 			return report.Overall, report, nil

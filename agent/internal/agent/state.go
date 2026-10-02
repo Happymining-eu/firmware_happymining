@@ -21,12 +21,17 @@ const (
 )
 
 // State is the content of the status file. It never contains a secret.
+// MachineID is the HappyMining machine id, which is not a secret: the root
+// helper reads it from this file to name backup archives (it never reads the
+// credential file), and LastHeartbeatOK tells its update guard that a newly
+// installed agent works.
 type State struct {
 	State               string `json:"state"`
 	UpdatedAt           string `json:"updated_at"`
 	AgentVersion        string `json:"agent_version"`
 	PID                 int    `json:"pid"`
 	DeviceID            string `json:"device_id,omitempty"`
+	MachineID           string `json:"machine_id,omitempty"`
 	CredentialID        string `json:"credential_id,omitempty"`
 	RevokedCredentialID string `json:"revoked_credential_id,omitempty"`
 	LastHeartbeatOK     string `json:"last_heartbeat_ok,omitempty"`

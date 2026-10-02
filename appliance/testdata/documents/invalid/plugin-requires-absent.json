@@ -1,0 +1,8 @@
+{
+ "why": "an enabled plugin needs its requirements present",
+ "document": {
+  "id": "qdrant",
+  "enabled": true,
+  "settings": {}
+ }
+}

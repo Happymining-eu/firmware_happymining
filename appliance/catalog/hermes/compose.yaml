@@ -1,0 +1,34 @@
+# Hermes Agent (Nous Research): gateway and dashboard in one container, as in
+# "Running the dashboard" of upstream's Docker guide (upstream's own
+# docker-compose.yml uses two containers on the host network instead).
+# See ../README.md for the sources.
+# The dashboard listens on 0.0.0.0:9119 in the container and refuses to start
+# without an authentication provider: user name and password are set here.
+# The OpenAI-compatible API server (8642) stays off (API_SERVER_ENABLED unset).
+services:
+  hermes:
+    image: docker.io/nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: hermes
+    environment:
+      - HERMES_DASHBOARD=1
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HM_SET_DASHBOARD_USER}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET
+      - ANTHROPIC_API_KEY
+      - OPENROUTER_API_KEY
+    command: ["gateway", "run"]
+    volumes:
+      - data:/opt/data
+    ports:
+      - "${HM_BIND}:9119:9119"
+    networks:
+      - hm-appliance
+
+volumes:
+  data:
+
+networks:
+  hm-appliance:
+    external: true

@@ -41,7 +41,13 @@ APP = {
     "dashboard/templates/base.html": b"<html></html>\n",
     "migrations/versions/0001_initial_schema.py": b"\n",
     "alembic.ini": b"[alembic]\n",
+    # The plugin catalog the API offers (docs/appliance.md, section 7).
+    "appliance/catalog/ollama/plugin.json": b"{}\n",
+    "appliance/catalog/ollama/compose.yaml": b"services: {}\n",
     # Not part of what runs on the server:
+    "appliance/vectorizer/app.py": b"\n",
+    "appliance/testdata/release-vector.json": b"{}\n",
+    "appliance/catalogue-notes.txt": b"\n",
     "agent/cmd/main.go": b"package main\n",
     "tests/api/test_x.py": b"\n",
     "deploy/.env.example": b"HM_SECRET_KEY=change-me\n",
@@ -78,6 +84,8 @@ def test_prepares_only_what_the_server_runs(tmp_path, fake_pip):
         "api/happymining/main.py",
         "api/happymining/services/ledger.py",
         "api/requirements.lock.txt",
+        "appliance/catalog/ollama/compose.yaml",
+        "appliance/catalog/ollama/plugin.json",
         "dashboard/templates/base.html",
         "migrations/versions/0001_initial_schema.py",
         "site/installed.txt",
@@ -193,3 +201,18 @@ def test_compose_file_fits_the_hostinger_api_limit():
     assert len(text) <= 8192, f"{len(text)} characters"
     # What that file relies on: no build step, and the bootstrap service.
     assert "build:" not in text and "bootstrap:" in text and "service_completed_successfully" in text
+
+
+def test_the_plugin_catalog_lands_where_the_api_looks_for_it(tmp_path, fake_pip):
+    """The API reads ``appliance/catalog`` next to its ``api`` directory when HM_CATALOG_DIR is unset."""
+    bootstrap = load()
+    final = bootstrap.prepare("o/r", SHA, tmp_path / "hm", fetcher=lambda url: tarball(APP), pip=fake_pip[0])
+    api_package = final / "api" / "happymining"
+    assert api_package.is_dir()
+    assert (api_package.parents[1] / "appliance" / "catalog" / "ollama" / "plugin.json").is_file()
+    # The path the service computes for itself, taken from the real source file.
+    source = (REPO / "api" / "happymining" / "services" / "catalog.py").read_text()
+    assert 'Path(__file__).resolve().parents[3] / "appliance" / "catalog"' in source
+    # Nothing else from appliance/: no vectorizer sources, no test keys.
+    assert sorted(p.name for p in (final / "appliance").iterdir()) == ["catalog"]
+

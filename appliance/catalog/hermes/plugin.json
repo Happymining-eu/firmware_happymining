@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "id": "hermes",
+  "version": "1",
+  "name": "Hermes Agent",
+  "summary": "The open-source agent by Nous Research with its web dashboard, set up to use the local models. The dashboard asks for the user name and the password set here. With a local model, set Ollama's context length to 64000 or more: Hermes refuses less.",
+  "homepage": "https://hermes-agent.nousresearch.com",
+  "license": "MIT",
+  "gpu": false,
+  "modes": [
+    "private_ai"
+  ],
+  "requires": [
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "dashboard",
+      "port": 9119,
+      "protocol": "http",
+      "ui": true
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "lan"
+    },
+    "dashboard_user": {
+      "type": "string",
+      "label": "Dashboard user name",
+      "env": "HM_SET_DASHBOARD_USER",
+      "max_len": 32,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$",
+      "default": "admin"
+    },
+    "local_model": {
+      "type": "string_list",
+      "label": "Model installed in Ollama that the agent uses (at most one; empty: choose provider and model in the dashboard)",
+      "env": "HM_SET_LOCAL_MODEL",
+      "max_items": 1,
+      "pattern": "^[a-z0-9][a-z0-9._/-]{0,80}(:[A-Za-z0-9._-]{1,40})?$",
+      "default": []
+    }
+  },
+  "secrets": [
+    {
+      "key": "dashboard_password",
+      "env": "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+      "label": "Dashboard password",
+      "required": true
+    },
+    {
+      "key": "dashboard_session_key",
+      "env": "HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+      "label": "Session signing key, 32 random characters or more (optional; without it everyone is signed out at each restart)",
+      "required": false
+    },
+    {
+      "key": "anthropic_api_key",
+      "env": "ANTHROPIC_API_KEY",
+      "label": "Anthropic API key (optional; what is asked to a cloud model leaves the machine)",
+      "required": false
+    },
+    {
+      "key": "openrouter_api_key",
+      "env": "OPENROUTER_API_KEY",
+      "label": "OpenRouter API key (optional; what is asked to a cloud model leaves the machine)",
+      "required": false
+    }
+  ],
+  "images": [
+    {
+      "ref": "docker.io/nousresearch/hermes-agent:v2026.9.24",
+      "digest": "sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "data",
+      "backup": "always"
+    }
+  ],
+  "post_start": [
+    {
+      "service": "hermes",
+      "exec": [
+        "/opt/hermes/bin/hermes",
+        "config",
+        "set",
+        "model.provider",
+        "custom"
+      ],
+      "for_each": "local_model",
+      "timeout_s": 120
+    },
+    {
+      "service": "hermes",
+      "exec": [
+        "/opt/hermes/bin/hermes",
+        "config",
+        "set",
+        "model.base_url",
+        "http://ollama:11434/v1"
+      ],
+      "for_each": "local_model",
+      "timeout_s": 120
+    },
+    {
+      "service": "hermes",
+      "exec": [
+        "/opt/hermes/bin/hermes",
+        "config",
+        "set",
+        "model.default",
+        "{item}"
+      ],
+      "for_each": "local_model",
+      "timeout_s": 120
+    }
+  ]
+}

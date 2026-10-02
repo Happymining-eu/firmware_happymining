@@ -13,8 +13,25 @@
 {$HM_SITE_ADDRESS} {
 	encode zstd gzip
 
-	# Device heartbeats are capped at 256 KiB by the API; nothing legitimate is larger than this.
-	request_body {
+	# Device heartbeats are capped at 256 KiB by the API; nothing legitimate is
+	# larger than 1 MB, except one route: the upload of a firmware package by
+	# staff (PUT /api/v1/releases/<version>/artifact). The API authenticates
+	# that request before it reads the body and caps it at HM_RELEASE_MAX_BYTES
+	# and at the size its signed manifest declares; here it gets 512 MB.
+	@release_artifact {
+		method PUT
+		path_regexp ^/api/v1/releases/[0-9]+\.[0-9]+\.[0-9]+/artifact$
+	}
+	@not_release_artifact {
+		not {
+			method PUT
+			path_regexp ^/api/v1/releases/[0-9]+\.[0-9]+\.[0-9]+/artifact$
+		}
+	}
+	request_body @release_artifact {
+		max_size 512MB
+	}
+	request_body @not_release_artifact {
 		max_size 1MB
 	}
 

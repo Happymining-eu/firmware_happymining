@@ -1,4 +1,5 @@
-/* HappyMining OS dashboard. No scripts, no inline styles (the CSP forbids both). */
+/* HappyMining OS dashboard. No inline scripts, no inline styles (the CSP forbids both).
+   The one script, /static/seal.js, is loaded on the appliance page only. */
 :root {
   --bg: #f6f5f1;
   --panel: #ffffff;
@@ -160,3 +161,25 @@ dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; ma
 dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
 ul.plain { margin: 0; padding-left: 18px; }
+
+/* Appliance page (appliance.html) and firmware releases (admin_releases.html). */
+[hidden] { display: none !important; }
+h3 { font-size: 15px; margin: 20px 0 8px; }
+details.edit { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; margin: 8px 0; }
+details.edit > summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+details.edit > summary .note { font-weight: 400; }
+details.edit[open] > summary { margin-bottom: 10px; }
+details.edit textarea { width: 100%; font-family: var(--mono); font-size: 13px; }
+form.stack.wide { max-width: 900px; }
+dl.kv.panel { align-content: start; }
+.secret-note { display: block; }
+.tile .sub .pill { margin-left: 4px; }
+ol.steps { padding-left: 20px; display: grid; gap: 14px; }
+ol.steps pre {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

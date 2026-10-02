@@ -49,7 +49,8 @@ from ..models import (
 )
 from ..providers.registry import get_provider
 from ..schemas import ApiClientIn, OperationIn, RevokeIn
-from ..services import api_clients
+from ..services import access, api_clients, remote_access
+from ..services import appliance as appliance_service
 from ..services import machines as machine_service
 from ..services import operations as operation_service
 from ..services.accounts import Principal
@@ -125,6 +126,7 @@ def machine_out(
     principal: ClientPrincipal,
     machine: Machine,
     latest: TelemetrySample | None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """One AI server, in a shape a fleet manager can put next to its other devices."""
     device = machine.device
@@ -133,10 +135,27 @@ def machine_out(
         **views.machine_view(settings, machine, staff=False),
         "hostname": device.hostname if device else None,
         "created_at": views.iso(machine.created_at),
+        # vast, private_ai or vectorize (docs/appliance.md, section 2); null when
+        # this client may not see the machine's appliance configuration.
+        "mode": mode,
     }
     if "telemetry:read" in principal.scopes:
         out["latest_telemetry"] = sample_summary(latest)
     return out
+
+
+def machine_modes(
+    db: Session, principal: ClientPrincipal, machines: list[Machine]
+) -> dict[uuid.UUID, str | None]:
+    """The mode each machine should be in.
+
+    The mode is part of the appliance configuration: on a customer-managed
+    machine a fleet-wide client sees it only under a remote-access grant, as
+    staff do.
+    """
+    visible = [m.id for m in machines if access.client_access(db, principal.owner_id, m) != "none"]
+    modes = appliance_service.desired_modes(db, visible)
+    return {m.id: modes.get(m.id) for m in machines}
 
 
 def _machine_query(principal: ClientPrincipal):
@@ -275,8 +294,9 @@ def list_machines(
         if "telemetry:read" in principal.scopes
         else {}
     )
+    modes = machine_modes(db, principal, list(machines))
     return {
-        "items": [machine_out(settings, principal, m, latest.get(m.id)) for m in machines],
+        "items": [machine_out(settings, principal, m, latest.get(m.id), modes[m.id]) for m in machines],
         "limit": limit,
         "offset": offset,
         "total": total,
@@ -292,7 +312,29 @@ def get_machine(
 ):
     machine = load_client_machine(db, principal, machine_id)
     latest = latest_samples(db, principal, [machine.id]) if "telemetry:read" in principal.scopes else {}
-    return machine_out(settings, principal, machine, latest.get(machine.id))
+    mode = machine_modes(db, principal, [machine])[machine.id]
+    return machine_out(settings, principal, machine, latest.get(machine.id), mode)
+
+
+@router.get("/machines/{machine_id}/appliance")
+def machine_appliance(
+    machine_id: uuid.UUID,
+    principal: ClientPrincipal = Depends(require_scope("appliance:read")),
+    db: Session = Depends(get_db),
+):
+    """Mode, plugin states and the indexing, backup and update summaries. Read only.
+
+    State, not configuration: no NAS host or user name and no secret name.
+    A fleet-wide client follows the staff rule: on a customer-managed machine
+    it needs a remote-access grant (``403 remote_access_required``).
+    """
+    machine = load_client_machine(db, principal, machine_id)
+    if access.client_access(db, principal.owner_id, machine) == "none":
+        raise Forbidden(
+            "this machine is managed by its owner; the owner's organisation has to grant remote access first",
+            code=access.REMOTE_ACCESS_REQUIRED,
+        )
+    return appliance_service.integration_view(db, machine)
 
 
 @router.get("/machines/{machine_id}/telemetry")
@@ -329,7 +371,9 @@ def operation_types(
 ):
     """What can be requested, and what this client and this server allow right now."""
     return {
-        "types": sorted(operation_service.OPERATION_TYPES),
+        # Without the operations only the appliance routes for people can request
+        # (running an appliance job, installing an update): a client cannot queue them.
+        "types": list(operation_service.GENERAL_TYPES),
         "disruptive": sorted(operation_service.DISRUPTIVE_TYPES),
         "not_implemented": sorted(operation_service.NOT_IMPLEMENTED_TYPES),
         "disruptive_operations_enabled": settings.disruptive_operations_enabled,
@@ -388,6 +432,9 @@ def request_operation(
     if body.type in operation_service.DISRUPTIVE_TYPES and "operations:disruptive" not in principal.scopes:
         raise Forbidden("this API client does not have the operations:disruptive scope")
     machine = load_client_machine(db, principal, machine_id, lock=True)
+    # A fleet-wide client is HappyMining's own software: on a customer-managed
+    # machine it needs the same remote-access grant as staff (403 remote_access_required).
+    remote_access.require_client_manage(db, principal, machine)
     try:
         provider = get_provider(settings)
     except Exception:
@@ -423,6 +470,10 @@ def cancel_operation(
     if found.requested_by_client != principal.client.id:
         # Someone else's request (an admin's, another client's) is not this client's to withdraw.
         raise Forbidden("only operations this API client requested can be cancelled by it")
+    # Same rule as requesting: without access to manage the machine, nothing on it is changed.
+    remote_access.require_client_manage(
+        db, principal, load_client_machine(db, principal, found.machine_id, lock=True)
+    )
     operation = operation_service.cancel(db, principal.actor(client_ip(request)), operation_id)
     api_clients.ensure_still_active(db, principal.client.id)
     db.commit()

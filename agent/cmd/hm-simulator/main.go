@@ -3,6 +3,11 @@
 // synthetic telemetry through the same client, spool and retry code as the
 // real agent. Every sample carries "synthetic": true.
 //
+// With --appliance (the default) every machine also reports a synthetic
+// appliance state and takes desired-state documents: they are validated with
+// the real validator against a plugin catalog and reported as applied, but
+// nothing is started, mounted or installed, and every detail says so.
+//
 // A passing simulator run is not proof that real hardware works.
 package main
 
@@ -15,10 +20,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/appliance"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/logx"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/redact"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/sim"
@@ -44,6 +51,65 @@ func readCodes(path string) ([]string, error) {
 	return out, sc.Err()
 }
 
+// installedCatalog is where the package installs the catalog.
+const installedCatalog = "/usr/share/happymining/catalog"
+
+// parseCapabilities reads the --appliance-capabilities list.
+func parseCapabilities(list string) (appliance.Capabilities, error) {
+	var c appliance.Capabilities
+	seen := map[string]bool{}
+	for _, item := range strings.Split(list, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if seen[item] {
+			return c, fmt.Errorf("--appliance-capabilities: %q listed twice", item)
+		}
+		seen[item] = true
+		switch item {
+		case "plugins":
+			c.Plugins = true
+		case "nas":
+			c.NAS = true
+		case "backup":
+			c.Backup = true
+		case "update":
+			c.Update = true
+		case "docker":
+			c.Docker = true
+		default:
+			return c, fmt.Errorf("--appliance-capabilities: unknown capability %q (plugins, nas, backup, update, docker)", item)
+		}
+	}
+	return c, nil
+}
+
+// loadCatalog loads the catalog given with --appliance-catalog, or the first
+// one found: the repository's (dist/bin/hm-simulator -> appliance/catalog),
+// then the installed one. Nil without error when none is found.
+func loadCatalog(dir string) (*appliance.Catalog, error) {
+	if dir != "" {
+		c, err := appliance.LoadCatalog(dir)
+		if err != nil {
+			return nil, fmt.Errorf("--appliance-catalog: %w", err)
+		}
+		return c, nil
+	}
+	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "..", "appliance", "catalog"))
+	}
+	for _, candidate := range append(candidates, installedCatalog) {
+		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+			if c, err := appliance.LoadCatalog(candidate); err == nil {
+				return c, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
 func run() int {
 	fs := flag.NewFlagSet("hm-simulator", flag.ContinueOnError)
 	var o sim.Options
@@ -64,6 +130,11 @@ func run() int {
 	fs.IntVar(&o.DuplicateEvery, "duplicate-every", 0, "lose the response of every Nth heartbeat so that samples are resent (0 = never)")
 	fs.DurationVar(&o.BackoffBase, "backoff-base", 0, "retry backoff base (default: the agent's 5s)")
 	fs.DurationVar(&o.BackoffCap, "backoff-cap", 0, "retry backoff cap (default: the agent's 15m)")
+	fs.BoolVar(&o.Appliance, "appliance", true, "report a synthetic appliance state and accept desired-state documents (nothing is started)")
+	caps := fs.String("appliance-capabilities", "plugins,nas,backup,update,docker",
+		"capabilities the synthetic helpers report: a comma-separated subset of plugins, nas, backup, update, docker (\"\" for none)")
+	catalogDir := fs.String("appliance-catalog", "",
+		"plugin catalog to validate documents against (default: the repository's appliance/catalog next to dist/, else "+installedCatalog+")")
 	logLevel := fs.String("log-level", "info", "debug, info, warn or error")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -76,6 +147,19 @@ func run() int {
 	if o.APIURL == "" || o.StateDir == "" {
 		fmt.Fprintln(os.Stderr, "hm-simulator: --api-url and --state-dir are required")
 		return 2
+	}
+	if o.Appliance {
+		var err error
+		if o.ApplianceCapabilities, err = parseCapabilities(*caps); err != nil {
+			fmt.Fprintln(os.Stderr, "hm-simulator:", err)
+			return 2
+		}
+		catalog, err := loadCatalog(*catalogDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "hm-simulator:", err)
+			return 2
+		}
+		o.ApplianceCatalog = catalog
 	}
 	redactor := redact.New()
 	for _, c := range strings.Split(*codes, ",") {
@@ -104,7 +188,10 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	o.Logger.Info("simulator starting: all telemetry is synthetic", slog.Int("machines", o.Machines),
-		slog.String("gpu_model", o.GPUModel), slog.Int("gpus", o.GPUs))
+		slog.String("gpu_model", o.GPUModel), slog.Int("gpus", o.GPUs), slog.Bool("appliance", o.Appliance))
+	if o.Appliance && o.ApplianceCatalog == nil {
+		o.Logger.Warn("no plugin catalog found: the simulated machines list no plugin and refuse every document (--appliance-catalog)")
+	}
 	summary, err := sim.Run(ctx, o)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

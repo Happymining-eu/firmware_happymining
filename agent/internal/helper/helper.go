@@ -1,39 +1,67 @@
 // Package helper implements hm-helper, the narrowly scoped privileged helper.
 //
-// It knows exactly two actions and nothing else:
+// Over its root-owned socket it knows these actions and nothing else:
 //
 //	restart-vast-daemon     systemctl restart vastai.service
 //	reboot --delay-s N      shutdown -r +M   (60 <= N <= 3600, M = N rounded up to minutes)
+//	appliance-status        the appliance state (files only; see applier.Status)
+//	appliance-apply         validate, store and hand the desired-state document to
+//	                        happymining-appliance-apply.service
+//	appliance-run-job       start happymining-appliance-job@<job>.service
+//	update-install          verify and stage a signed release, then start
+//	                        happymining-update-install.service
+//
+// The socket actions are quick: none of them runs Docker, mount, a backup or
+// dpkg. The heavy work runs in dedicated oneshot units, as root command-line
+// actions of hm-helper (cmd/hm-helper), in package applier.
 //
 // Each action is refused unless its switch is enabled in the root-owned file
-// /etc/happymining/helper.conf (default: everything disabled). Commands are
-// executed with absolute paths and argv arrays; there is no shell and no
-// string interpolation. Every invocation is written to the audit log.
+// /etc/happymining/helper.conf (default: everything disabled;
+// appliance-status needs none). Commands are executed with absolute paths and
+// argv arrays; there is no shell and no string interpolation. Every
+// invocation is written to the audit log, which never receives a secret.
 package helper
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/appliance"
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/applier"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/config"
 	"github.com/Happymining-eu/firmware_happymining/agent/internal/execx"
+	"github.com/Happymining-eu/firmware_happymining/agent/internal/release"
 )
 
 // Actions.
 const (
 	ActionRestartVastDaemon = "restart-vast-daemon"
 	ActionReboot            = "reboot"
+	ActionApplianceStatus   = "appliance-status"
+	ActionApplianceApply    = "appliance-apply"
+	ActionApplianceRunJob   = "appliance-run-job"
+	ActionUpdateInstall     = "update-install"
+)
+
+// Jobs appliance-run-job accepts (docs/appliance.md, 6.5; update_check is
+// the agent's own job and never reaches the helper).
+const (
+	JobVectorizeSync = applier.JobVectorizeSync
+	JobBackupRun     = applier.JobBackupRun
+	JobPluginRestart = applier.JobPluginRestart
 )
 
 // Fixed command lines. The Vast unit name is not verified against Vast
@@ -53,19 +81,45 @@ const (
 
 // Response codes.
 const (
-	CodeInvalid      = "invalid"
-	CodeDisabled     = "disabled"
-	CodeFailed       = "failed"
-	CodeUnauthorized = "unauthorized"
+	CodeInvalid           = "invalid"
+	CodeDisabled          = "disabled"
+	CodeFailed            = "failed"
+	CodeUnauthorized      = "unauthorized"
+	CodeLocallyControlled = "locally_controlled"
+	CodeBusy              = "busy"
 )
 
-// MaxRequestBytes bounds a request read from the socket.
-const MaxRequestBytes = 256
+// Size limits of the socket protocol. A request line is at most
+// MaxRequestBytes for every action but appliance-apply (MaxApplyRequestBytes:
+// a document of up to 64 KiB with its envelope) and update-install
+// (MaxUpdateRequestBytes: a manifest of up to 16 KiB in base64, see the
+// helper interface's "Contract questions"). A response line is at most
+// MaxResponseBytes.
+const (
+	MaxRequestBytes       = 256
+	MaxApplyRequestBytes  = 96 * 1024
+	MaxUpdateRequestBytes = 32 * 1024
+	MaxResponseBytes      = 256 * 1024
+)
+
+// Field bounds of update-install.
+const (
+	maxManifestB64  = (release.MaxManifestBytes + 2) / 3 * 4
+	maxSignatureB64 = 128
+	maxArtifactPath = 512
+)
 
 // Request is one helper request. It is also the wire format on the socket.
 type Request struct {
-	Action string `json:"action"`
-	DelayS *int64 `json:"delay_s,omitempty"`
+	Action       string          `json:"action"`
+	DelayS       *int64          `json:"delay_s,omitempty"`       // reboot only
+	Document     json.RawMessage `json:"document,omitempty"`      // appliance-apply only
+	Job          string          `json:"job,omitempty"`           // appliance-run-job only
+	Plugin       string          `json:"plugin,omitempty"`        // appliance-run-job with job plugin_restart only
+	Version      string          `json:"version,omitempty"`       // update-install only
+	ManifestB64  string          `json:"manifest_b64,omitempty"`  // update-install only
+	SignatureB64 string          `json:"signature_b64,omitempty"` // update-install only
+	ArtifactPath string          `json:"artifact_path,omitempty"` // update-install only
 }
 
 // Response is the helper's answer.
@@ -73,21 +127,52 @@ type Response struct {
 	OK     bool   `json:"ok"`
 	Code   string `json:"code,omitempty"`
 	Detail string `json:"detail"`
+	// Result is set for appliance-status (a StatusResult) and
+	// appliance-apply (an ApplyResult).
+	Result json.RawMessage `json:"result,omitempty"`
 }
+
+// StatusResult is the result of appliance-status: the JSON of
+// appliance.Reported without "schedules", plus "applied_schedules".
+type StatusResult = applier.StatusResult
+
+// ApplyResult is the result of appliance-apply.
+type ApplyResult = applier.ApplyResult
 
 // Deps are the helper's injectable dependencies.
 type Deps struct {
 	ConfPath string
-	// ConfOwnerUID is the uid that must own the switch file (0 in production).
+	// ConfOwnerUID is the uid that must own the switch file and every
+	// root-only file of the helper (0 in production).
 	ConfOwnerUID uint32
 	Runner       execx.Runner
 	// Audit receives one line per event.
 	Audit func(line string)
+	// Paths are the appliance locations (applier.DefaultPaths in
+	// production). A zero value disables every appliance action, so that
+	// nothing can fall back to real system paths.
+	Paths applier.Paths
+	// AgentUID is the uid of the unprivileged agent (owner of downloads).
+	AgentUID uint32
+	// Version is the installed agent version.
+	Version string
+	// Now, Sleep and HasDocker are optional (tests).
+	Now       func() time.Time
+	Sleep     func(time.Duration)
+	HasDocker func() bool
 }
 
 func (d Deps) audit(format string, args ...any) {
 	if d.Audit != nil {
 		d.Audit(fmt.Sprintf(format, args...))
+	}
+}
+
+// Engine returns the appliance engine for the given switches.
+func (d Deps) Engine(conf config.Helper) *applier.Env {
+	return &applier.Env{
+		Paths: d.Paths, Runner: d.Runner, Switches: conf, OwnerUID: d.ConfOwnerUID, AgentUID: d.AgentUID,
+		Version: d.Version, Now: d.Now, Sleep: d.Sleep, Audit: d.Audit, HasDocker: d.HasDocker,
 	}
 }
 
@@ -113,13 +198,34 @@ func ParseArgs(args []string) (Request, error) {
 	return Request{}, errors.New("usage: hm-helper restart-vast-daemon | hm-helper reboot --delay-s N")
 }
 
-// Validate checks a request against the fixed argument rules.
+var reVersion = regexp.MustCompile(`^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$`)
+
+// Validate checks a request against the fixed argument rules: each action
+// takes exactly its own fields.
 func (r Request) Validate() error {
+	has := map[string]bool{
+		"delay_s": r.DelayS != nil, "document": len(r.Document) > 0, "job": r.Job != "", "plugin": r.Plugin != "",
+		"version": r.Version != "", "manifest_b64": r.ManifestB64 != "", "signature_b64": r.SignatureB64 != "",
+		"artifact_path": r.ArtifactPath != "",
+	}
+	only := func(fields ...string) error {
+		allowed := map[string]bool{}
+		for _, f := range fields {
+			allowed[f] = true
+		}
+		for f, set := range has {
+			if set && !allowed[f] {
+				return fmt.Errorf("%s does not take %s", r.Action, f)
+			}
+		}
+		return nil
+	}
 	switch r.Action {
 	case ActionRestartVastDaemon:
 		if r.DelayS != nil {
 			return errors.New("restart-vast-daemon takes no argument")
 		}
+		return only()
 	case ActionReboot:
 		if r.DelayS == nil {
 			return errors.New("reboot requires delay_s")
@@ -127,10 +233,62 @@ func (r Request) Validate() error {
 		if *r.DelayS < MinDelayS || *r.DelayS > MaxDelayS {
 			return fmt.Errorf("delay_s must be between %d and %d", MinDelayS, MaxDelayS)
 		}
-	default:
-		return errors.New("unknown action")
+		return only("delay_s")
+	case ActionApplianceStatus:
+		return only()
+	case ActionApplianceApply:
+		if len(r.Document) == 0 {
+			return errors.New("appliance-apply requires document")
+		}
+		if len(r.Document) > appliance.MaxDocumentBytes {
+			return fmt.Errorf("the document is larger than %d bytes", appliance.MaxDocumentBytes)
+		}
+		return only("document")
+	case ActionApplianceRunJob:
+		switch r.Job {
+		case JobVectorizeSync, JobBackupRun:
+			if r.Plugin != "" {
+				return fmt.Errorf("job %s takes no plugin", r.Job)
+			}
+		case JobPluginRestart:
+			if !applier.ValidID(r.Plugin) {
+				return errors.New("job plugin_restart requires a valid plugin id")
+			}
+		default:
+			return errors.New("job must be vectorize_sync, backup_run or plugin_restart")
+		}
+		return only("job", "plugin")
+	case ActionUpdateInstall:
+		if !reVersion.MatchString(r.Version) {
+			return errors.New("version must be MAJOR.MINOR.PATCH")
+		}
+		if r.ManifestB64 == "" || len(r.ManifestB64) > maxManifestB64 {
+			return errors.New("manifest_b64 is required and bounded")
+		}
+		if _, err := base64.StdEncoding.Strict().DecodeString(r.ManifestB64); err != nil {
+			return errors.New("manifest_b64 is not base64")
+		}
+		if r.SignatureB64 == "" || len(r.SignatureB64) > maxSignatureB64 {
+			return errors.New("signature_b64 is required and bounded")
+		}
+		if len(r.ArtifactPath) > maxArtifactPath || !filepath.IsAbs(r.ArtifactPath) ||
+			filepath.Clean(r.ArtifactPath) != r.ArtifactPath || strings.ContainsAny(r.ArtifactPath, "\x00\n") {
+			return errors.New("artifact_path must be a clean absolute path")
+		}
+		return only("version", "manifest_b64", "signature_b64", "artifact_path")
 	}
-	return nil
+	return errors.New("unknown action")
+}
+
+// maxRequestFor is the largest request line of an action.
+func maxRequestFor(action string) int {
+	switch action {
+	case ActionApplianceApply:
+		return MaxApplyRequestBytes
+	case ActionUpdateInstall:
+		return MaxUpdateRequestBytes
+	}
+	return MaxRequestBytes
 }
 
 // LoadConf reads the switch file. A missing file means everything is
@@ -202,7 +360,60 @@ func Execute(ctx context.Context, req Request, d Deps) Response {
 			fmt.Sprintf("reboot scheduled in %d minute(s) (requested delay %d s, rounded up to whole minutes)", minutes, *req.DelayS),
 			ShutdownPath, "-r", "+"+strconv.FormatInt(minutes, 10), RebootMessage)
 	}
+
+	// Appliance actions.
+	if err := d.Paths.Check(); err != nil {
+		d.audit("refused action=%s: the appliance paths are not configured", req.Action)
+		return Response{Code: CodeFailed, Detail: "the helper is not configured for appliance actions"}
+	}
+	engine := d.Engine(conf)
+	switch req.Action {
+	case ActionApplianceStatus:
+		res, err := applier.Status(ctx, engine)
+		if err != nil {
+			d.audit("action=%s failed: %v", req.Action, err)
+			return Response{Code: CodeFailed, Detail: "the appliance state cannot be read: " + clip(err.Error(), 300)}
+		}
+		return withResult(Response{OK: true, Detail: "appliance state"}, res)
+	case ActionApplianceApply:
+		if !conf.AllowPlugins && !conf.AllowNAS {
+			d.audit("action=%s: applying is disabled in %s; the document is only validated and stored", req.Action, d.ConfPath)
+		}
+		return fromOutcome(applier.QuickApply(ctx, engine, req.Document))
+	case ActionApplianceRunJob:
+		d.audit("executing action=%s job=%s plugin=%s", req.Action, req.Job, req.Plugin)
+		return fromOutcome(applier.QuickRunJob(ctx, engine, req.Job, req.Plugin))
+	case ActionUpdateInstall:
+		d.audit("executing action=%s version=%s", req.Action, req.Version)
+		return fromOutcome(applier.QuickUpdateInstall(ctx, engine, applier.UpdateRequest{
+			Version: req.Version, ManifestB64: req.ManifestB64, SignatureB64: req.SignatureB64, ArtifactPath: req.ArtifactPath,
+		}))
+	}
 	return Response{Code: CodeInvalid, Detail: "unknown action"}
+}
+
+func fromOutcome(o applier.Outcome) Response {
+	resp := Response{OK: o.OK, Code: o.Code, Detail: o.Detail}
+	if o.Result != nil {
+		return withResult(resp, o.Result)
+	}
+	return resp
+}
+
+func withResult(resp Response, result any) Response {
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return Response{Code: CodeFailed, Detail: "the result cannot be encoded"}
+	}
+	resp.Result = raw
+	return resp
+}
+
+func clip(s string, max int) string {
+	if len(s) > max {
+		s = s[:max]
+	}
+	return strings.ToValidUTF8(s, "?")
 }
 
 func run(ctx context.Context, d Deps, action string, timeout time.Duration, okDetail, path string, args ...string) Response {
@@ -224,13 +435,14 @@ func run(ctx context.Context, d Deps, action string, timeout time.Duration, okDe
 }
 
 // DecodeRequest strictly decodes one request: a single JSON object, no
-// unknown fields, no trailing data, bounded size.
+// unknown fields, no trailing data, bounded size (the bound depends on the
+// action, see MaxRequestBytes).
 func DecodeRequest(r io.Reader) (Request, error) {
-	data, err := io.ReadAll(io.LimitReader(r, MaxRequestBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, MaxApplyRequestBytes+2))
 	if err != nil {
 		return Request{}, errors.New("cannot read request")
 	}
-	if len(data) > MaxRequestBytes {
+	if len(bytes.TrimRight(data, "\n")) > MaxApplyRequestBytes {
 		return Request{}, errors.New("request too large")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -241,6 +453,9 @@ func DecodeRequest(r io.Reader) (Request, error) {
 	}
 	if dec.More() {
 		return Request{}, errors.New("trailing data after request")
+	}
+	if len(bytes.TrimRight(data, "\n")) > maxRequestFor(req.Action) {
+		return Request{}, errors.New("request too large")
 	}
 	return req, req.Validate()
 }

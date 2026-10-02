@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"syscall"
 	"time"
@@ -14,7 +15,9 @@ import (
 
 // Socket protocol: the client connects to the root-owned unix socket
 // (systemd socket activation, one helper process per connection), writes one
-// JSON request terminated by a newline and reads one JSON response line. The helper checks the peer's uid with SO_PEERCRED.
+// JSON request terminated by a newline (at most MaxRequestBytes, or more for
+// appliance-apply and update-install) and reads one JSON response line (at
+// most MaxResponseBytes). The helper checks the peer's uid with SO_PEERCRED.
 
 // PeerUID returns the uid of the process at the other end of a unix socket.
 func PeerUID(conn *net.UnixConn) (uint32, error) {
@@ -42,6 +45,10 @@ func ServeConn(ctx context.Context, conn net.Conn, peerUID uint32, allowedUIDs [
 	reply := func(r Response) Response {
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		raw, _ := json.Marshal(r)
+		if len(raw)+1 > MaxResponseBytes {
+			r = Response{Code: CodeFailed, Detail: "the response is larger than the protocol allows"}
+			raw, _ = json.Marshal(r)
+		}
 		_, _ = conn.Write(append(raw, '\n'))
 		return r
 	}
@@ -55,7 +62,9 @@ func ServeConn(ctx context.Context, conn net.Conn, peerUID uint32, allowedUIDs [
 		d.audit("refused connection from uid %d", peerUID)
 		return reply(Response{Code: CodeUnauthorized, Detail: "peer is not allowed to use the helper"})
 	}
-	line, err := bufio.NewReaderSize(conn, MaxRequestBytes+2).ReadSlice('\n')
+	// The largest request (appliance-apply) bounds the line; DecodeRequest
+	// then applies the bound of the action.
+	line, err := bufio.NewReaderSize(conn, MaxApplyRequestBytes+2).ReadSlice('\n')
 	if err != nil {
 		d.audit("refused request from uid %d: no complete request line", peerUID)
 		return reply(Response{Code: CodeInvalid, Detail: "no complete request line within the size and time limit"})
@@ -109,10 +118,15 @@ func (c *Client) Do(ctx context.Context, req Request) (Response, error) {
 	// answer is still readable, so a write error is only reported if there is
 	// no answer.
 	_, writeErr := conn.Write(append(raw, '\n'))
-	line, err := bufio.NewReaderSize(conn, 4096).ReadSlice('\n')
+	// The response line can be up to MaxResponseBytes (appliance-status):
+	// read it with a growing buffer, bounded.
+	line, err := bufio.NewReaderSize(io.LimitReader(conn, MaxResponseBytes+1), 4096).ReadBytes('\n')
 	if err != nil {
 		if writeErr != nil {
 			return Response{}, fmt.Errorf("write helper request: %w", writeErr)
+		}
+		if len(line) > MaxResponseBytes {
+			return Response{}, errors.New("helper response is larger than the protocol allows")
 		}
 		return Response{}, fmt.Errorf("read helper response: %w", err)
 	}

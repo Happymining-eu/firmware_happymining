@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "id": "open-webui",
+  "version": "1",
+  "name": "Open WebUI",
+  "summary": "A chat page for the local models, for the people on your network. Everyone signs in with an account: the administrator's account is created at the first start from the e-mail address and the password set here, and the administrator then adds the others.",
+  "homepage": "https://openwebui.com",
+  "license": "Open WebUI License (BSD-3-Clause terms plus a branding clause)",
+  "gpu": false,
+  "modes": [
+    "private_ai"
+  ],
+  "requires": [
+    "ollama"
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 3000,
+      "protocol": "http",
+      "ui": true
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "lan"
+    },
+    "admin_email": {
+      "type": "string",
+      "label": "Administrator's e-mail address, the sign-in name (used once, when the first account is created)",
+      "env": "HM_SET_ADMIN_EMAIL",
+      "max_len": 120,
+      "pattern": "^[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,55}$",
+      "default": "admin@localhost"
+    }
+  },
+  "secrets": [
+    {
+      "key": "admin_password",
+      "env": "WEBUI_ADMIN_PASSWORD",
+      "label": "Administrator's password (used once, when the first account is created)",
+      "required": true
+    }
+  ],
+  "images": [
+    {
+      "ref": "docker.io/openwebui/open-webui:0.11.4",
+      "digest": "sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "data",
+      "backup": "always"
+    }
+  ],
+  "post_start": []
+}

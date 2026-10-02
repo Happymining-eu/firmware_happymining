@@ -12,6 +12,7 @@ from ..audit import Actor, audit
 from ..db import lock_row
 from ..errors import Conflict, InvalidRequest, NotFound
 from ..models import ApiClient, Machine, MachineOwnership, Operation, Owner, ProviderMachine, utcnow
+from . import appliance
 from .provider_sync import _attribution_blockers
 
 
@@ -97,6 +98,11 @@ def transfer_ownership(
             )
         )
     machine.owner_id = new_owner_id
+    # The new owner starts from an empty appliance configuration: no NAS entry,
+    # plugin or sealed secret of the previous owner is carried over. Done before
+    # the operations below are touched: appliance row first, then operation
+    # rows, as everywhere else.
+    appliance.reset_for_new_owner(db, machine, actor)
     # Whatever an API client limited to the previous owner had queued and the
     # machine has not received yet was asked for under an authority that ends here.
     db.execute(

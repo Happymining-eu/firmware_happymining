@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "qdrant",
+  "version": "1",
+  "name": "Qdrant",
+  "summary": "Vector database that holds the index built by the vectorizer. Unless you choose otherwise it is reachable from this machine and the other plugins only; without an API key it has no authentication.",
+  "homepage": "https://qdrant.tech",
+  "license": "Apache-2.0",
+  "gpu": false,
+  "modes": [
+    "private_ai",
+    "vectorize"
+  ],
+  "requires": [],
+  "ports": [
+    {
+      "name": "api",
+      "port": 6333,
+      "protocol": "http",
+      "ui": false
+    }
+  ],
+  "settings": {
+    "bind": {
+      "type": "enum",
+      "label": "Reachable from",
+      "env": "HM_SET_BIND",
+      "values": [
+        "localhost",
+        "lan"
+      ],
+      "default": "localhost"
+    }
+  },
+  "secrets": [
+    {
+      "key": "api_key",
+      "env": "QDRANT__SERVICE__API_KEY",
+      "label": "API key every client must send (leave empty while the vectorizer is used: it sends none)",
+      "required": false
+    }
+  ],
+  "images": [
+    {
+      "ref": "docker.io/qdrant/qdrant:v1.19.1",
+      "digest": "sha256:12364fe851b9f17356fc88189fc06d1b521262e04659ec7345975b00c9246a10",
+      "verified": true
+    }
+  ],
+  "volumes": [
+    {
+      "name": "storage",
+      "backup": "always"
+    },
+    {
+      "name": "snapshots",
+      "backup": "never"
+    }
+  ],
+  "post_start": []
+}

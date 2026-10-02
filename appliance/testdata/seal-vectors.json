@@ -1,0 +1,50 @@
+{
+  "comment": "Test vectors for the seal format in docs/appliance.md. The private key below is a TEST key, published on purpose; never use it on a machine.",
+  "machine_private_key_pkcs8_b64": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgdS4chxbv7PAAqEwe2xW8o8ZzjU67EtealGaND8NaPmKhRANCAAR6jGectEfmalIDMkJyBuwjiR0QbnRpT2F2oV5wGp1bNM4sw0D8MdET2wSuRt5Tlnee/UA7u8bjiWiye6i652bd",
+  "machine_private_scalar_hex": "752e1c8716efecf000a84c1edb15bca3c6738d4ebb12d79a94668d0fc35a3e62",
+  "machine_public_key": "hmk1.BHqMZ5y0R-ZqUgMyQnIG7COJHRBudGlPYXahXnAanVs0zizDQPwx0RPbBK5G3lOWd579QDu7xuOJaLJ7qLrnZt0",
+  "vectors": [
+    {
+      "name": "nas.docs.password",
+      "plaintext_b64": "Y29ycmVjdCBob3JzZSBiYXR0ZXJ5IHN0YXBsZQ==",
+      "sealed": "hmseal1.BG9-prt1TqhB5Rlfynq9b3i37HVHi28C1ZSC94OoBDNxgkvbSROTFE_AdgosTxYl03SnP-g32MJdo1pGCo0BrZiB1mIXwImaMHmO4tfYCUY48M4-xGC4x1RbUGU3Kbxx9G4z0UZ1nXZlBSSuKw"
+    },
+    {
+      "name": "ai.api_key",
+      "plaintext_b64": "c2stdGVzdC0wMTIzNDU2Nzg5YWJjZGVm",
+      "sealed": "hmseal1.BIrPW93tdk3959RVOOHrDge_UcK7QckRvQo5fZ6hc12pKr3DM7Rq3sLeHlkHNzd4edBWs_CpzHCRY3Z3haPJr-bw7bow4ON87YY0rN5if77AlaTbHK_W9bt1VHz1eFkmhgBvQbSJ2cX-"
+    },
+    {
+      "name": "s3.secret_key",
+      "plaintext_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QA==",
+      "sealed": "hmseal1.BKJHLUG8jsB_KR43hZlTITaN8ReDzLBPtMoIbfhiZjNjxy3ISTVkQdx29-Hzwp1oR36IXRkbOkfwy7lKLqADfQ517p0cv9fiCvXIaneZ1ArplMzGUNNrae6DEglaEjgOm7sxxo__CHWkb1LcxwD2DCLlYRYJ5HqiJKejAKp6tu6WAhlAuKH-ctfptDS2nPGDPw"
+    },
+    {
+      "name": "x",
+      "plaintext_b64": "cMOkc3N3w7ZyZC13aXRoLcO8bmljb2RlIOKckw==",
+      "sealed": "hmseal1.BGoM0in6iniiRGn-B57_v7RWyNV7P9aQnHhApQ7cABMBYcdsgIUJLYSWuUfQYLHvsNyhy0H-3iKi8Nra57UYcPs_9QKIirTmokvL0n5N3uu3Re2HNSwGVOwV363N-YxTcIiYWOMYb8Z6DlJ73Q"
+    }
+  ],
+  "must_fail": [
+    {
+      "why": "wrong name (the name is authenticated)",
+      "name": "nas.other.password",
+      "sealed": "hmseal1.BG9-prt1TqhB5Rlfynq9b3i37HVHi28C1ZSC94OoBDNxgkvbSROTFE_AdgosTxYl03SnP-g32MJdo1pGCo0BrZiB1mIXwImaMHmO4tfYCUY48M4-xGC4x1RbUGU3Kbxx9G4z0UZ1nXZlBSSuKw"
+    },
+    {
+      "why": "one bit flipped in the ciphertext",
+      "name": "ai.api_key",
+      "sealed": "hmseal1.BIrPW93tdk3959RVOOHrDge_UcK7QckRvQo5fZ6hc12pKr3DM7Rq3sLeHlkHNzd4edBWs_CpzHCRY3Z3haPJr-bw7bow4ON87YY0rN5if77AlaTbHK_W9bt1VHz1eFkmhgBvQbSJ2AX-"
+    },
+    {
+      "why": "truncated",
+      "name": "ai.api_key",
+      "sealed": "hmseal1.BIrPW93tdk3959RVOOHrDge_UcK7QckRvQo5fZ6hc12pKr3DM7Rq"
+    },
+    {
+      "why": "wrong prefix",
+      "name": "ai.api_key",
+      "sealed": "hmseal2.BIrPW93tdk3959RVOOHrDge_UcK7QckRvQo5fZ6hc12pKr3DM7Rq3sLeHlkHNzd4edBWs_CpzHCRY3Z3haPJr-bw7bow4ON87YY0rN5if77AlaTbHK_W9bt1VHz1eFkmhgBvQbSJ2cX-"
+    }
+  ]
+}

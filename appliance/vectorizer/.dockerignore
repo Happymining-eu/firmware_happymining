@@ -1,0 +1,4 @@
+# Only what the image needs: the package and the lock.
+**/__pycache__
+**/*.pyc
+README.md

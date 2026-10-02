@@ -3,14 +3,30 @@
 #
 # What it does: create the unprivileged system user and group, create the
 # state directories, enable the units. What it never does: start pairing,
-# touch disks or partitions, install or remove any package, touch Docker,
-# NVIDIA drivers or Vast software. Existing state (credential, spool, journal)
-# is left exactly as it is, so upgrades keep the pairing and the buffer.
+# touch disks or partitions, mount anything, install or remove any package,
+# touch Docker, NVIDIA drivers or Vast software. Existing state (credential,
+# spool, journal, the helper's keys, plugin data) is left exactly as it is, so
+# upgrades keep the pairing, the buffer and the appliance.
+#
+# Rollback of firmware updates needs the package that is installed, as
+# /var/lib/happymining-helper/packages/current.deb. dpkg does not tell a
+# maintainer script which file it installs, so this script cannot place it:
+# the helper records it after each update it installs, and the installer
+# places it on a first installation from the image. After a first
+# installation by hand (dpkg -i) it is missing, and the helper refuses
+# updates (no rollback possible) unless ALLOW_UPDATE_WITHOUT_ROLLBACK=1.
 set -e
 
 # DPKG_ROOT is empty on a normal installation.
 ROOT="${DPKG_ROOT:-}"
 STATE_DIR="$ROOT/var/lib/happymining"
+# Root-only state of the privileged helper: sealing key, backup key, applied
+# document, staged packages.
+HELPER_DIR="$ROOT/var/lib/happymining-helper"
+# Data of the appliance's plugins, and the mount points of the NAS shares.
+PLUGINS_DIR="$ROOT/var/lib/happymining-plugins"
+SRV_DIR="$ROOT/srv/happymining"
+NAS_DIR="$SRV_DIR/nas"
 UNITS="happymining-firstboot.service happymining-helper.socket happymining-agent.service"
 
 case "$1" in
@@ -24,9 +40,24 @@ case "$1" in
                 --gecos "HappyMining agent" happymining
         fi
 
-        mkdir -p "$STATE_DIR" "$STATE_DIR/spool"
-        chown happymining:happymining "$STATE_DIR" "$STATE_DIR/spool"
-        chmod 0750 "$STATE_DIR" "$STATE_DIR/spool"
+        # The agent's state directory. Its parent belongs to root, so the
+        # path itself cannot be a link the agent made. What is INSIDE it
+        # belongs to the agent account, which could replace any entry with a
+        # symbolic link: chown and chmod would follow that link, as root, to
+        # any file on the system. So this script never touches an entry
+        # inside it; the agent creates its spool (0750) and its download
+        # directory for firmware packages, updates (0700), itself.
+        mkdir -p "$STATE_DIR"
+        chown happymining:happymining "$STATE_DIR"
+        chmod 0750 "$STATE_DIR"
+
+        # Owned by root whatever was there before: the helper relies on
+        # nobody else being able to write into these. Their parents (/var/lib,
+        # /srv) belong to root as well.
+        mkdir -p "$HELPER_DIR" "$PLUGINS_DIR" "$NAS_DIR"
+        chown root:root "$HELPER_DIR" "$PLUGINS_DIR" "$SRV_DIR" "$NAS_DIR"
+        chmod 0700 "$HELPER_DIR" "$PLUGINS_DIR"
+        chmod 0755 "$SRV_DIR" "$NAS_DIR"
 
         # Enabling must not fail the installation where systemd is absent or
         # not running (chroot, image build, installer).

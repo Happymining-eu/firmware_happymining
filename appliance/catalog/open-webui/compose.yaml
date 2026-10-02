@@ -1,0 +1,38 @@
+# Open WebUI: chat page for the local models. See ../README.md for the sources.
+# Its own login stays on (WEBUI_AUTH is left at its default, true).
+# The page listens on 8080 in the container and is published on 3000, as upstream does.
+# Open WebUI keeps its connection settings in its database: OLLAMA_BASE_URL and
+# ENABLE_OPENAI_API below are read at the first start only; afterwards the
+# administrator changes them in Open WebUI's own settings.
+services:
+  open-webui:
+    image: docker.io/openwebui/open-webui:0.11.4@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
+    restart: unless-stopped
+    labels:
+      eu.happymining.plugin: open-webui
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # The session key is generated once by the image's start script; kept in the data volume.
+      - WEBUI_SECRET_KEY_FILE=/app/backend/data/.webui_secret_key
+      # Creates the administrator when no account exists yet, and closes sign-up.
+      - WEBUI_ADMIN_EMAIL=${HM_SET_ADMIN_EMAIL}
+      - WEBUI_ADMIN_PASSWORD
+      # No cloud connection at the first start (upstream would try api.openai.com).
+      - ENABLE_OPENAI_API=false
+      # The image is pinned and updated with the firmware: no release check on GitHub.
+      - ENABLE_VERSION_UPDATE_CHECK=false
+      # Use the embedding model shipped in the image; no update check on Hugging Face at each start.
+      - RAG_EMBEDDING_MODEL_AUTO_UPDATE=false
+    volumes:
+      - data:/app/backend/data
+    ports:
+      - "${HM_BIND}:3000:8080"
+    networks:
+      - hm-appliance
+
+volumes:
+  data:
+
+networks:
+  hm-appliance:
+    external: true

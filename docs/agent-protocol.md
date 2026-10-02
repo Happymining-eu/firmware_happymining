@@ -170,6 +170,15 @@ Rules:
   samples in LIVE mode.
 - The agent never collects renter files, container contents, prompts, datasets,
   process command lines of renter workloads, or environment variables.
+- `appliance` (optional, next to `samples`): the appliance state of the
+  machine, defined in `docs/appliance.md`, section 6.1. The agent built with
+  the appliance always sends it (at most 64 KiB encoded); an agent that does
+  not know about it sends nothing, and then nothing below about the
+  appliance applies to it. When the privileged helper does not answer, the
+  object says `"control": "unknown"`, `"mode": "unknown"`,
+  `"apply_status": "disabled"`, with the reason in `apply_detail`. The API
+  keeps only the listed keys and values, bounds and redacts every string,
+  and uses none of it for authorisation.
 
 Response `200`:
 
@@ -191,6 +200,23 @@ samples in an acknowledged batch from its spool whatever the split between
 accepted, duplicate and rejected.
 
 `operations` lists pending operations (section 4).
+
+`appliance` is present only when the request carried an `appliance` object
+and the machine has a cloud configuration (revision at least 1):
+
+```json
+{"appliance": {"revision": 12, "document": { … }}}
+```
+
+`document`, the desired-state document of `docs/appliance.md` section 4 with
+its sealed secrets, is included when the request's `applied_revision` differs
+from `revision`, and only when the request said `"control": "cloud"`: not
+under `local` (the machine ignores it) and not under `unknown` (its helper
+did not answer, so it could not apply it). The
+agent checks its size (64 KiB) and that its `revision` matches, and hands it
+to the root helper, which validates it again against the catalog installed
+on the machine. An agent that sent no `appliance` object gets no
+`appliance` key back.
 
 ## 4. Typed operations
 
@@ -220,6 +246,15 @@ Operation object:
 | `reboot` | `{"delay_s": 60..3600}` | **disabled** | Via privileged helper. The server only issues 60..300, so that the reboot happens while the rental check that allowed it is still fresh. |
 | `run_benchmark` | `{"duration_s": 30..600}` | **disabled** | Reserved. Not implemented in agent 0.1.0; the server refuses to queue it (`501`). |
 | `apply_hardware_profile` | `{"profile_id": "<id>"}` | **disabled** | Reserved. Not implemented in agent 0.1.0; the server refuses to queue it (`501`). |
+| `appliance_run_job` | `{"job": J}` with J one of `vectorize_sync`, `backup_run`, `update_check`; or exactly `{"job": "plugin_restart", "plugin": "<plugin id>"}` (`^[a-z][a-z0-9-]{0,30}$`) | enabled | Starts one of HappyMining's own appliance jobs. `update_check` runs in the agent; the others are started by the helper, which needs `ALLOW_PLUGINS` (`vectorize_sync`, `plugin_restart`) or `ALLOW_BACKUP` (`backup_run`). One final acknowledgement: `succeeded` once the job is started. Progress is in the heartbeat's `appliance` object. |
+| `install_update` | exactly `{"version": "MAJOR.MINOR.PATCH"}` | enabled | Downloads, checks and hands that release to the helper (`ALLOW_UPDATE`), which verifies and installs it (`docs/appliance.md`, section 9). Acknowledged `accepted` at once, final acknowledgement when the hand-off is done. |
+
+The two appliance types are not disruptive for renters and are enabled by
+default in the agent: the helper's root-owned switches are the gate, all off
+by default. The server queues them only through the machine's appliance
+routes (`docs/appliance.md`, section 12), never through the general
+operation routes or the integration API. An agent that does not know them
+rejects them as unknown types.
 
 Agent rules:
 
@@ -255,6 +290,24 @@ An operation that was already handed to the device is not sent a second time
 if the rental check has since closed, and its record is not rewritten: the
 device may have started it. Its acknowledgement is still accepted.
 
+An operation that has not been handed to the device yet is cancelled at
+delivery when whoever requested it may no longer have it carried out: staff
+or a fleet-wide API client on a machine managed by its owner, once the
+remote-access grant expired or was revoked or the machine changed owner; a
+person of the owner's organisation, or a client limited to that owner, once
+the machine changed owner; a person who was deactivated or lost the role
+(`services/remote_access.py`). A device never sees such an operation.
+
+`install_update` runs in the background so that telemetry keeps flowing: the
+agent acknowledges `accepted`, then `succeeded` or `failed` when the
+download and the hand-off to the helper are done. If the operation is handed
+over again meanwhile, the agent answers `accepted` again and starts nothing.
+A download can outlast the operation's lifetime (`HM_OPERATION_TTL_S`,
+default 600 s); the final acknowledgement then gets `410 expired`, and the
+reported `update` state is what tells whether the release was installed.
+`succeeded` means the helper verified and staged the package and started
+the installation, not that `dpkg` finished.
+
 `GET /api/v1/device/operations` returns `{"operations": [...]}` (same objects).
 
 ## 5. Credential rotation
@@ -274,6 +327,46 @@ between the response and the write cannot lock the device out.
 
 Used by `happyminingctl status` to check connectivity and credential validity.
 
+## 7. Firmware updates
+
+Defined in `docs/appliance.md`, sections 6.6 and 9. Device credential only.
+
+`GET /api/v1/device/update` →
+
+```json
+{"channel": "stable", "policy": "auto", "window": {"start_hour": 2, "end_hour": 5},
+ "release": {"version": "0.2.0", "manifest_b64": "…", "signature_b64": "…",
+             "size": 9412345, "sha256": "…", "artifact_path": "/api/v1/device/update/artifact/0.2.0"}}
+```
+
+- `channel` `stable`, `beta` or `none`; `policy` `manual` or `auto`; both
+  from the machine's cloud configuration (`none` and `manual` when it has no
+  `update` section; `window` is then `null`).
+- `release` is the newest release on that channel that is newer than the
+  `agent_version` the device last reported and whose `min_upgrade_from` is
+  not newer than it, signed with a key the server still trusts; `null`
+  otherwise, also when the reported version cannot be compared.
+- `manifest_b64` is the signed manifest, byte for byte; the agent forwards it
+  with `signature_b64` to the helper, which verifies it with the keys
+  installed on the machine. The agent itself only checks that the manifest
+  and the offer agree.
+
+`GET /api/v1/device/update/artifact/{version}` → the package bytes,
+`application/octet-stream`. `version` is at most 24 characters. `404
+not_found` for a version that is not offered on the machine's channel (or
+has no package). At most 12 downloads an hour per device (`429
+rate_limited`), on top of the general per-device limit. The agent writes the
+download to `/var/lib/happymining/updates/` and gives up after 2 minutes
+without data.
+
+The agent asks for the offer 2 minutes after it starts, then every 6 hours,
+only while the helper reports the `update` capability, and when an
+`update_check` job or an `install_update` operation asks for it. It installs
+only an `install_update` operation's exact version, or with `policy: auto`
+inside the window. The control plane queues `install_update` only for the
+release the machine is offered (the newest installable one on its channel);
+the offer carries only that release's manifest and signature.
+
 ## Outage behaviour
 
 A HappyMining API outage must never stop Vast hosting. The agent only observes
@@ -281,3 +374,8 @@ and reports; it has no role in the rental data path. When the API is
 unreachable the agent keeps collecting, buffers samples on disk within its
 quota (oldest dropped first when full), and retries with jitter. It executes no
 new operations while disconnected, because operations only arrive in responses.
+
+The appliance keeps running during an outage: plugins, mounts, the index,
+the schedules and backups are on the machine. The agent keeps asking the
+helper for its state and keeps starting the schedules. No new document and
+no update can arrive.

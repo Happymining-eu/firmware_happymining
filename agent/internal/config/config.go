@@ -367,6 +367,24 @@ func parseMounts(value string) ([]string, error) {
 type Helper struct {
 	AllowRestartVastDaemon bool
 	AllowReboot            bool
+	// AllowPlugins: start and stop catalog plugins (docs/appliance.md, 8).
+	AllowPlugins bool
+	// AllowNAS: mount and unmount the document's NAS entries.
+	AllowNAS bool
+	// AllowBackup: run backups (and stop and start the plugins whose
+	// volumes are saved, for the duration of the backup).
+	AllowBackup bool
+	// AllowUpdate: install signed firmware releases.
+	AllowUpdate bool
+	// AllowUnpinnedImages: start a plugin whose images are not all pinned
+	// to a digest read from the registry.
+	AllowUnpinnedImages bool
+	// AllowForeignContainers: start GPU plugins while containers that
+	// HappyMining did not start are running.
+	AllowForeignContainers bool
+	// AllowUpdateWithoutRollback: install a release although no copy of the
+	// installed package is kept for a rollback.
+	AllowUpdateWithoutRollback bool
 }
 
 // ParseHelper parses a helper switch file.
@@ -386,6 +404,20 @@ func ParseHelper(r io.Reader) (Helper, error) {
 			h.AllowRestartVastDaemon = b
 		case "ALLOW_REBOOT":
 			h.AllowReboot = b
+		case "ALLOW_PLUGINS":
+			h.AllowPlugins = b
+		case "ALLOW_NAS":
+			h.AllowNAS = b
+		case "ALLOW_BACKUP":
+			h.AllowBackup = b
+		case "ALLOW_UPDATE":
+			h.AllowUpdate = b
+		case "ALLOW_UNPINNED_IMAGES":
+			h.AllowUnpinnedImages = b
+		case "ALLOW_FOREIGN_CONTAINERS":
+			h.AllowForeignContainers = b
+		case "ALLOW_UPDATE_WITHOUT_ROLLBACK":
+			h.AllowUpdateWithoutRollback = b
 		default:
 			return Helper{}, fmt.Errorf("unknown helper configuration key %s", key)
 		}

@@ -1,0 +1,50 @@
+# OpenClaw gateway and control page. See ../README.md for the sources.
+# Follows the gateway service of upstream's docker-compose.yml: its command,
+# paths, dropped capabilities and no-new-privileges; the image's own
+# HEALTHCHECK applies. Left out: the bridge and Teams ports, the CLI service,
+# extra_hosts. --allow-unconfigured lets the first start happen before
+# post_start writes gateway.mode=local. The token is required for every
+# connection (a non-loopback bind without authentication is refused).
+# OPENCLAW_NO_AUTO_UPDATE=1 stops the daily update request to
+# telemetry.openclaw.ai: the image is pinned and updated with the firmware.
+services:
+  openclaw:
+    image: docker.io/openclaw/openclaw:2026.9.7@sha256:0da12cd49983fcb5e4915fd3135ce7a33d82f93649b1df6964946d2c1d1dbcfc
+    restart: unless-stopped
+    init: true
+    labels:
+      eu.happymining.plugin: openclaw
+    environment:
+      - HOME=/home/node
+      - OPENCLAW_HOME=/home/node
+      - OPENCLAW_STATE_DIR=/home/node/.openclaw
+      - OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json
+      - OPENCLAW_CONFIG_DIR=/home/node/.openclaw
+      - OPENCLAW_WORKSPACE_DIR=/home/node/.openclaw/workspace
+      - OPENCLAW_GATEWAY_PORT=18789
+      - OPENCLAW_NO_AUTO_UPDATE=1
+      - OPENCLAW_GATEWAY_TOKEN
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENROUTER_API_KEY
+    command: ["node", "dist/index.js", "gateway", "--allow-unconfigured", "--bind", "lan", "--port", "18789"]
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - state:/home/node/.openclaw
+      - auth:/home/node/.config/openclaw
+    ports:
+      - "${HM_BIND}:18789:18789"
+    networks:
+      - hm-appliance
+
+volumes:
+  state:
+  auth:
+
+networks:
+  hm-appliance:
+    external: true

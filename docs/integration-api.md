@@ -5,7 +5,8 @@ fleet manager HappyMining already runs for its ASIC miners, so that the GPU
 servers appear and can be managed in the same place.
 
 Code: `api/happymining/routers/integration.py`,
-`api/happymining/services/api_clients.py`. A ready-made Python client is in
+`api/happymining/services/api_clients.py`; the remote-access rule is in
+`api/happymining/services/access.py`. A ready-made Python client is in
 `integrations/molehash/`.
 
 ```
@@ -48,10 +49,25 @@ to a browser and never commit it.
 | `operations:write` | Request non-disruptive typed operations, and cancel the client's own while they are still pending. |
 | `operations:disruptive` | Also request operations that can interrupt a renter (Vast daemon restart, reboot). Needs `operations:write`. |
 | `earnings:read` | Reported and received earnings per machine and day. |
+| `appliance:read` | A machine's appliance state: mode, plugins, indexing, backup and update (`GET /machines/{id}/appliance`). Changes nothing. |
 
 There is no scope for moving money, recording receipts, payouts, fees, users,
 pairing codes, provider bindings, beneficiary details or the audit trail. A
-client cannot be given any of them.
+client cannot be given any of them. Nor is there one that changes a
+machine's appliance configuration (`docs/appliance.md`), runs an appliance
+job or installs a firmware update: those are done by people on the
+dashboard.
+
+**Machines managed by their owner.** A machine is managed by HappyMining
+(`company`, the Vast fleet) or by its owner (`customer`). A fleet-wide client
+is HappyMining's own software and follows the rule for HappyMining staff: on
+a `customer` machine it sees connection state, hardware, telemetry and
+operation history as before, but reading the appliance state, requesting an
+operation and cancelling one answer `403 remote_access_required` until the
+owner's organisation has issued a remote-access grant (`view` for reading,
+`manage` for operations). A client limited to one owner acts for that owner
+and is not affected. Operations a fleet-wide client queued under a grant are
+cancelled before delivery when the grant ends.
 
 ## Calling it
 
@@ -74,6 +90,7 @@ client cannot be given any of them.
 | 400 / 422 | `invalid_request` | The request is wrong. Do not retry it unchanged. |
 | 401 | `client_unauthorized` | Token missing, malformed, unknown, revoked or expired. All look the same. |
 | 403 | `forbidden` | The client lacks the scope named in the message. |
+| 403 | `remote_access_required` | A fleet-wide client on a machine managed by its owner, without the remote-access grant this needs. Do not retry until the owner grants access. |
 | 404 | `not_found` | No such object, or it is outside the client's owner. |
 | 409 | `maintenance_blocked` | The rental-protection gate refused a disruptive operation. See below. |
 | 409 | `conflict` | State conflict, for example cancelling an operation already delivered, or an idempotency key reused for something else. |
@@ -120,9 +137,18 @@ utilisation, hottest GPU).
                "state_observed_at": "…", "state_stale": false, "state_detail": "…", "missing_from_provider": false},
   "latest_telemetry": {"collected_at": "…", "synthetic": false, "gpu_count": 2,
                        "gpu_util_avg": 41.5, "gpu_power_w": 402.8, "gpu_temp_max": 59.0},
-  "created_at": "…"
+  "created_at": "…",
+  "mode": "vast"
 }
 ```
+
+- `mode`: what the machine is configured to be, `vast` (Vast hosting, no
+  plugin runs), `private_ai` or `vectorize` (`docs/appliance.md`, section 2);
+  `vast` when nothing was configured. `null` when this client may not see
+  the machine's appliance configuration (a fleet-wide client on a machine
+  managed by its owner, without a grant). It needs only `fleet:read`. It is
+  the desired mode; what the machine reports is in
+  `GET /machines/{id}/appliance`.
 
 - `connection`: `online`, `stale` (no heartbeat for five minutes),
   `paired_never_seen`, `unpaired`, `revoked`.
@@ -133,6 +159,44 @@ utilisation, hottest GPU).
   the day the machine became that owner's, not what happened before.
 - Telemetry comes from the agent on the owner's machine. It is informational:
   an owner with root can alter it. It never decides money or maintenance.
+
+### `GET /machines/{id}/appliance` — `appliance:read`
+
+State, not configuration: no NAS host, share or user name, no secret name,
+and none of the free-text details the machine reports (a mount error can
+quote a host name). `403 remote_access_required` for a fleet-wide client on
+a machine managed by its owner without a grant.
+
+```json
+{
+  "machine_id": "8c1e…",
+  "mode": "private_ai", "reported_mode": "private_ai",
+  "management": "customer", "control": "cloud",
+  "revision": 12, "applied_revision": 12, "apply_status": "applied", "in_sync": true,
+  "reported_at": "…",
+  "plugins": [{"id": "ollama", "enabled": true, "state": "running", "version": "1"}],
+  "vectorizer": {"configured": true, "state": "idle", "last_run_at": "…", "last_ok_at": "…",
+                 "files_indexed": 1820, "files_failed": 3, "files_skipped": 12, "chunks": 40211},
+  "backup": {"configured": true, "enabled": true, "state": "ok", "key_present": true,
+             "last_ok_at": "…", "last_size_bytes": 123456},
+  "update": {"channel": "stable", "policy": "auto", "current_version": "0.2.0",
+             "state": "idle", "target_version": ""}
+}
+```
+
+- `mode`, `plugins[].enabled`, `configured`, `enabled`, `channel` and
+  `policy` are the configuration HappyMining holds; `reported_mode`,
+  `apply_status`, the states and the counters are what the machine last
+  reported (`null` before its first report).
+- `control`: `local` when the machine follows its own profile file and
+  ignores the cloud configuration; `unknown` when its agent could not reach
+  the machine's helper at the last report (the configuration then waits);
+  otherwise `cloud`.
+- `in_sync`: the machine finished applying exactly the revision held here
+  (`apply_status` `applied`). `true` for a machine that was never
+  configured.
+- The values the machine reports are not verified: an owner with root can
+  make them say anything.
 
 ### `GET /machines/{id}/telemetry` — `telemetry:read`
 
@@ -160,6 +224,13 @@ and of other clients are not given.
 Statuses: `pending` → `delivered` → `accepted` → `succeeded` | `failed` |
 `rejected`; or `expired`, `cancelled`, `blocked`.
 
+`/operation-types` lists the types a client can request. The list of
+operations can also show `appliance_run_job` and `install_update`
+(`docs/appliance.md`, section 6.5), requested by people on the dashboard; a
+client cannot request them. An `install_update` can end `expired` while the
+machine still installs the release: the `update` state in
+`GET /machines/{id}/appliance` is what tells.
+
 ### `POST /machines/{id}/operations` — `operations:write`
 
 ```
@@ -184,7 +255,14 @@ operations queued or running on one machine.
 | `run_benchmark`, `apply_hardware_profile` | | Not implemented: `501`. |
 
 There is no free-form command. Unknown types and unknown parameters are
-refused.
+refused, and so are `appliance_run_job` and `install_update`
+(`400 invalid_request`).
+
+On a machine managed by its owner, a fleet-wide client needs a remote-access
+grant with the `manage` level for every type, disruptive or not: without it
+the answer is `403 remote_access_required` and nothing is queued. An
+operation queued under a grant that ends before the machine received it is
+`cancelled`.
 
 **Idempotency.** Send the same key when retrying after a timeout or a crash:
 the first operation is returned with `200` and nothing new is queued. The same
@@ -213,7 +291,8 @@ unavailable for AI servers rather than as failing buttons.
 ### `POST /operations/{id}/cancel` — `operations:write`
 
 Only the client's own operations (`403` otherwise), and only while `pending`.
-Once delivered, the machine may already be executing it: `409`.
+Once delivered, the machine may already be executing it: `409`. The same
+remote-access rule as for requesting applies (`403 remote_access_required`).
 
 ### `GET /earnings/daily`, `GET /earnings/summary` — `earnings:read`
 
@@ -257,3 +336,11 @@ tokens are logged with the caller's address.
 - No filter on connection state in `/machines`; filter on the caller's side.
 - One token per client. Rotation has no overlap period: update the caller
   right after rotating.
+- Appliance: read only (`appliance:read`). No change of mode, plugins, NAS,
+  backups or updates, no appliance job, no remote-access grant through this
+  API. The Python client in `integrations/molehash/` has no method for
+  `GET /machines/{id}/appliance` and does not know `remote_access_required`
+  yet.
+- The integration tests (`tests/api/test_integration_api.py`, including the
+  scope of the new route) need PostgreSQL and have **not run** against the
+  code that adds `appliance:read`, `mode` and `remote_access_required`.

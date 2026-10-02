@@ -1,0 +1,8 @@
+{
+ "why": "only the required keys; lists default to empty",
+ "document": {
+  "schema": 1,
+  "revision": 1,
+  "mode": "vast"
+ }
+}

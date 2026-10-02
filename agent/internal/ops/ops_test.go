@@ -31,6 +31,9 @@ type fakeExec struct {
 	result    any
 	detail    string
 	journalAt func() bool // reports whether the id is already journaled when executing
+	// install_update: the start error, and the completion of the last start.
+	installStartErr error
+	installDone     func(string, error)
 }
 
 func (f *fakeExec) record(name string) (string, error) {
@@ -66,6 +69,20 @@ func (f *fakeExec) RestartVastDaemon(context.Context) (string, error) {
 }
 func (f *fakeExec) Reboot(_ context.Context, delay int) (string, error) {
 	return f.record(fmt.Sprintf("reboot:%d", delay))
+}
+func (f *fakeExec) ApplianceRunJob(_ context.Context, job, plugin string) (string, error) {
+	return f.record("appliance_run_job:" + job + ":" + plugin)
+}
+func (f *fakeExec) InstallUpdate(_ context.Context, version string, done func(string, error)) error {
+	f.calls = append(f.calls, "install_update:"+version)
+	if f.journalAt != nil && !f.journalAt() {
+		return errors.New("executed before being journaled")
+	}
+	if f.installStartErr != nil {
+		return f.installStartErr
+	}
+	f.installDone = done
+	return nil
 }
 
 type fakeAcker struct {

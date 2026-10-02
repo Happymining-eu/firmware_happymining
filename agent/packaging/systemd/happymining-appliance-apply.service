@@ -1,0 +1,55 @@
+[Unit]
+Description=HappyMining appliance: apply the desired-state document
+Documentation=file:///usr/share/doc/happymining-agent/README.md
+# Started only by the privileged helper (`systemctl start --no-block`) when a
+# document arrives, when the local profile, the switches or the boot changed,
+# and by `hm-helper secret-set`. No [Install] section on purpose.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root on purpose: it mounts the NAS entries and drives Docker Compose for the
+# catalog plugins, each part only when its switch in the root-owned
+# /etc/happymining/helper.conf is on (ALLOW_NAS, ALLOW_PLUGINS).
+User=root
+ExecStart=/usr/lib/happymining/hm-helper apply-stored
+# Image pulls and builds can take long; the helper bounds each command too.
+TimeoutStartSec=3h
+UMask=0077
+
+# --- Sandbox ---------------------------------------------------------------
+# Relaxation: no file-system namespace at all. ProtectSystem=, ProtectHome=,
+# PrivateTmp=, PrivateDevices=, ProtectKernelTunables=, ProtectKernelModules=,
+# ProtectKernelLogs=, ProtectControlGroups=, ProtectHostname=, ProtectProc=
+# and Read*Paths= each give the unit its own mount namespace, and systemd then
+# turns off propagation from the unit to the host: a NAS share mounted here
+# would exist only inside this unit and vanish when it ends. The NAS mounts
+# must be made in the host's namespace, so none of these is set.
+NoNewPrivileges=yes
+# Relaxation: CAP_SYS_ADMIN for mount(8)/umount(8); CAP_DAC_OVERRIDE and
+# CAP_DAC_READ_SEARCH because mount.cifs keeps them to read the credentials
+# file; CAP_NET_BIND_SERVICE because the NFS mount helper talks to mountd from
+# a reserved port; CAP_SETUID/CAP_SETGID/CAP_CHOWN/CAP_FOWNER for the mount
+# helpers' own privilege handling. The Docker CLI needs none (the daemon does
+# the work). This set is not verified on a real machine with CIFS or NFS.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=
+# Relaxation: AF_INET/AF_INET6 for the mount helpers' name resolution and the
+# NFS RPC calls, AF_NETLINK for getaddrinfo(3); AF_UNIX for systemd and the
+# Docker daemon.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# Relaxation: @mount on top of the service set, for mount(2) and umount2(2).
+SystemCallFilter=@system-service @mount
+SystemCallErrorNumber=EPERM
+# Device access through the cgroup (not a mount namespace): no device node is
+# needed to mount a network file system or to talk to Docker.
+DevicePolicy=closed
+MemoryMax=1G
+TasksMax=256

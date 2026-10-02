@@ -38,7 +38,7 @@ as_pg() {
 wait_ready() {
   local _
   for _ in $(seq 1 60); do
-    if "$1" -h 127.0.0.1 -p "$PORT" -q >/dev/null 2>&1; then return 0; fi
+    if "$1" -h 127.0.0.1 -p "$PORT" -U happymining -d happymining -q >/dev/null 2>&1; then return 0; fi
     sleep 0.5
   done
   echo "PostgreSQL did not become ready on port $PORT" >&2
@@ -48,8 +48,22 @@ wait_ready() {
 start_local() {
   local bin
   bin="$(pg_bin)" || { echo "No Docker daemon and no local PostgreSQL binaries found." >&2; exit 1; }
-  if [ -f "$STATE_DIR/data/postmaster.pid" ] && "$bin/pg_isready" -h 127.0.0.1 -p "$PORT" -q; then
+  # -U and -d are explicit: without them pg_isready looks up the current user
+  # and, when it cannot, answers "no attempt" although the server is fine.
+  if [ -f "$STATE_DIR/data/postmaster.pid" ] &&
+    "$bin/pg_isready" -h 127.0.0.1 -p "$PORT" -U happymining -d happymining -q; then
     echo "$URL"; return 0
+  fi
+  # Not answering is not proof that nothing runs on this data directory. Never
+  # delete the files of a server that is still alive.
+  local pid=""
+  if [ -f "$STATE_DIR/data/postmaster.pid" ]; then
+    pid="$(head -n 1 "$STATE_DIR/data/postmaster.pid" 2>/dev/null || true)"
+  fi
+  if [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && kill -0 "$pid" 2>/dev/null; then
+    echo "A PostgreSQL server (pid $pid) still runs on $STATE_DIR/data but does not answer on port $PORT." >&2
+    echo "Its data is left alone. Check it, or run: $0 stop" >&2
+    exit 1
   fi
   rm -rf "$STATE_DIR"
   mkdir -p "$STATE_DIR"
