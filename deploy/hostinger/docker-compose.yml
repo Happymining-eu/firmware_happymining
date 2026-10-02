@@ -3,7 +3,7 @@
 # Stock images only: the host's Docker manager pulls and runs, it never
 # builds. The "bootstrap" container fetches the commit HM_GIT_REF and its
 # hash-pinned dependencies into a volume; the rest runs from it, read-only.
-# Explained in deploy/README.md. Variables: deploy/hostinger/.env.example.
+# See deploy/README.md and deploy/hostinger/.env.example.
 # Keep this file under 8192 characters: the Hostinger API refuses more.
 
 name: happymining-os
@@ -12,7 +12,7 @@ x-app: &app
   image: python:3.13-slim-bookworm
   restart: unless-stopped
   user: "10001:10001"
-  working_dir: /opt/hm/${HM_GIT_REF:?set HM_GIT_REF to the commit to deploy}
+  working_dir: /opt/hm/${HM_GIT_REF:?set HM_GIT_REF}
   volumes:
     - app:/opt/hm:ro
   environment: &app-env
@@ -20,8 +20,8 @@ x-app: &app
     PYTHONUNBUFFERED: "1"
     PYTHONDONTWRITEBYTECODE: "1"
     HM_MIGRATIONS_DIR: /opt/hm/${HM_GIT_REF}/migrations
-    HM_MODE: ${HM_MODE:?set HM_MODE to demo or live}
-    HM_PROVIDER: ${HM_PROVIDER:?set HM_PROVIDER to fake (demo) or vast (live)}
+    HM_MODE: ${HM_MODE:?set HM_MODE}
+    HM_PROVIDER: ${HM_PROVIDER:?set HM_PROVIDER}
     HM_SECRET_KEY: ${HM_SECRET_KEY:?set HM_SECRET_KEY}
     HM_FIELD_ENCRYPTION_KEY: ${HM_FIELD_ENCRYPTION_KEY:?set HM_FIELD_ENCRYPTION_KEY}
     HM_DATABASE_URL: postgresql+psycopg://happymining_app:${HM_DB_APP_PASSWORD:?set HM_DB_APP_PASSWORD}@db:5432/happymining
@@ -54,8 +54,7 @@ x-app: &app
     - backend
 
 services:
-  # Prepares /opt/hm/<commit>. Root in the container, with no capabilities,
-  # only to write into the volume.
+  # Prepares /opt/hm/<commit>. Root without capabilities, to write the volume.
   bootstrap:
     image: python:3.13-slim-bookworm
     restart: "no"
@@ -189,7 +188,7 @@ services:
 
       traefik.http.middlewares.hmos-limit.buffering.maxRequestBodyBytes: "1048576"
       traefik.http.middlewares.hmos-headers.headers.customResponseHeaders.X-Robots-Tag: noindex, nofollow
-      # Default: an account nobody can sign in to, so an unset gate is shut.
+      # Default: an account nobody can use, so an unset gate is shut.
       traefik.http.middlewares.hmos-gate.basicauth.users: ${HM_BASIC_AUTH_USERS:-locked:{SHA}+t2oFd+om50/+UcIqJaJQ9V9nsQ=}
       traefik.http.middlewares.hmos-gate.basicauth.realm: HappyMining OS staging
       traefik.http.middlewares.hmos-gate.basicauth.removeheader: "true"
