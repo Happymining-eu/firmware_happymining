@@ -103,6 +103,27 @@ hm_need_tools() {
     fi
 }
 
+hm_need_python_modules() {
+    # hm_need_python_modules MODULE=PACKAGE... — exit 77 (skipped: prerequisite
+    # not available) when python3 cannot import MODULE. PACKAGE is the
+    # Ubuntu/Debian package that provides it, named in the message. Run it
+    # before any long step: build-iso.sh used to find out only after
+    # downloading and hashing the 3 GB Ubuntu image.
+    local missing=0 spec module package
+    for spec in "$@"; do
+        module="${spec%%=*}"
+        package="${spec#*=}"
+        if ! python3 -c 'import importlib, sys; importlib.import_module(sys.argv[1])' "$module" >/dev/null 2>&1; then
+            hm_err "prerequisite not available: python3 module '$module' (package $package)"
+            missing=1
+        fi
+    done
+    if [[ "$missing" == "1" ]]; then
+        hm_err "skipped: prerequisite not available (exit $HM_EXIT_SKIP)"
+        exit "$HM_EXIT_SKIP"
+    fi
+}
+
 hm_quote_cmd() {
     # Print a command line that can be pasted into a shell, for dry-run output
     # and logs. Plain words are printed as they are; anything else is put in

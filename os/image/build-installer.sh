@@ -82,6 +82,7 @@ produced=()
 not_produced=()
 
 hm_need_tools python3 tar gzip sha256sum find
+hm_need_python_modules yaml=python3-yaml
 
 # ----- 1. validation ---------------------------------------------------------------
 hm_log "validating the autoinstall files"

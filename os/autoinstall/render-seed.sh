@@ -261,6 +261,7 @@ fi
 [[ -n "$OUT_DIR" ]] || hm_die "$HM_EXIT_USAGE" "--out DIR is required"
 
 hm_need_tools python3
+hm_need_python_modules yaml=python3-yaml
 
 # The key file is parsed by a small Python program: private keys are refused,
 # every line must be a well-formed public key whose base64 body names the same

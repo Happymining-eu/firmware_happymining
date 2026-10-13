@@ -247,6 +247,15 @@ def path_with(bin_dir: Path) -> str:
     return f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}"
 
 
+def env_without_python_module(tmp_path: Path, module: str) -> dict:
+    """Environment in which python3 cannot import MODULE: a MODULE.py that raises
+    ImportError is put first on PYTHONPATH (the build hosts that lacked PyYAML)."""
+    blocker = tmp_path / f"no-{module}"
+    blocker.mkdir(exist_ok=True)
+    (blocker / f"{module}.py").write_text(f"raise ImportError('{module} hidden by the test')\n")
+    return {"PYTHONPATH": str(blocker)}
+
+
 # ---------------------------------------------------------------------------
 # YAML through the system python3 (the interpreter the tools themselves use).
 # The interpreter that runs pytest may not have PyYAML installed.

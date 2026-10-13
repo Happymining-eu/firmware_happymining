@@ -129,6 +129,10 @@ os/release/make-checksums.sh --signing-key-home .signing
 os/smoke/qemu-smoke.sh
 ```
 
+Build host packages (Ubuntu 24.04): `xorriso gpg gpgv gpg-agent curl python3
+python3-yaml python3-jsonschema ubuntu-keyring`. A missing `python3-yaml` is
+reported (exit `77`) before anything is downloaded.
+
 `build-installer.sh` always validates the autoinstall files and builds
 `dist/happymining-seed-generic.tar.gz` and
 `dist/happymining-install-scripts-<version>.tar.gz`. It builds the ISO only when

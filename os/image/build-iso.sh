@@ -215,6 +215,9 @@ if [[ "$HM_DRY_RUN" == "1" ]]; then
     for tool in xorriso gpgv sha256sum python3 curl; do
         hm_have "$tool" || hm_warn "prerequisite not available on this host: $tool (a real build would exit $HM_EXIT_SKIP)"
     done
+    if hm_have python3 && ! python3 -c "import yaml" >/dev/null 2>&1; then
+        hm_warn "prerequisite not available on this host: python3 module yaml (package python3-yaml; a real build would exit $HM_EXIT_SKIP)"
+    fi
     [[ -f "$AGENT_DEB" ]] || hm_warn "agent package not present: $AGENT_DEB (a real build would exit $HM_EXIT_SKIP)"
     W='<work>'
     if [[ -n "$STAGE_ONLY" ]]; then
@@ -263,6 +266,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -n "$STAGE_ONLY" ]]; then
     hm_need_tools sha256sum python3 find
+    hm_need_python_modules yaml=python3-yaml
     [[ ! -e "$STAGE_ONLY" ]] || hm_die "$HM_EXIT_REFUSED" "--stage-only target already exists: $STAGE_ONLY"
     check_agent_deb
     check_signing_choice
@@ -284,6 +288,7 @@ fi
 # Real build
 # ---------------------------------------------------------------------------
 hm_need_tools xorriso gpgv sha256sum python3 find diff awk
+hm_need_python_modules yaml=python3-yaml   # validate.py; checked before the download
 check_agent_deb
 check_signing_choice
 if [[ ! -r "$UBUNTU_KEYRING" ]]; then

@@ -17,7 +17,8 @@ import tarfile
 
 import pytest
 
-from hm_os_testlib import FIXTURES, IMAGE_DIR, OS_DIR, build_stub_deb, make_stub, path_with, run
+from hm_os_testlib import (FIXTURES, IMAGE_DIR, OS_DIR, build_stub_deb, env_without_python_module,
+                           make_ed25519_pubkey_line, make_stub, path_with, run)
 
 BUILD_ISO = IMAGE_DIR / "build-iso.sh"
 ISO_NAME = "ubuntu-24.04.5-live-server-amd64.iso"
@@ -211,3 +212,38 @@ def test_build_installer_reports_the_image_only_when_it_exists(build_env):
     summary = failed.stdout[failed.stdout.index("===== build-installer summary ====="):]
     produced, not_produced = summary.split("NOT PRODUCED:")
     assert OUT_NAME not in produced and OUT_NAME in not_produced
+
+
+def test_missing_pyyaml_is_a_skip_before_the_base_image_is_touched(build_env):
+    """On the VPS the build downloaded and hashed the 3 GB Ubuntu image, then
+    failed with exit 1 in validate.py because python3 had no PyYAML."""
+    env = {**build_env.environ, **env_without_python_module(build_env.tmp, "yaml")}
+    out = run(build_env.args, env=env)
+    assert out.returncode == 77, out.stdout + out.stderr
+    assert "python3 module 'yaml' (package python3-yaml)" in out.stderr
+    assert "Ubuntu SHA256SUMS" not in out.stdout and "base ISO" not in out.stdout
+    assert not build_env.out.exists()
+    assert leftovers(build_env.dist) == []
+
+    stage = run([BUILD_ISO, "--stage-only", build_env.tmp / "staged", *build_env.args[1:]], env=env)
+    assert stage.returncode == 77, stage.stdout + stage.stderr
+    assert not (build_env.tmp / "staged").exists()
+
+
+def test_build_installer_and_render_seed_also_name_the_missing_pyyaml(build_env, tmp_path):
+    env = {**build_env.environ, **env_without_python_module(build_env.tmp, "yaml")}
+    out = run([IMAGE_DIR / "build-installer.sh", *build_env.args[1:]], env=env)
+    assert out.returncode == 77, out.stdout + out.stderr
+    assert "python3 module 'yaml' (package python3-yaml)" in out.stderr
+    assert "not valid" not in out.stderr
+
+    key = tmp_path / "id.pub"
+    key.write_text(make_ed25519_pubkey_line() + "\n")
+    by_id = "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S7KHNJ0X123456"
+    seed = run([OS_DIR / "autoinstall/render-seed.sh", "--disk-by-id", by_id,
+                "--disk-serial", "Samsung_SSD_990_PRO_2TB_S7KHNJ0X123456", "--confirm-erase", by_id,
+                "--ssh-authorized-key-file", key, "--hostname", "gpu-01", "--out", tmp_path / "seed",
+                "--yes-i-have-read-the-plan"], env=env)
+    assert seed.returncode == 77, seed.stdout + seed.stderr
+    assert "python3 module 'yaml' (package python3-yaml)" in seed.stderr
+    assert not (tmp_path / "seed").exists()
