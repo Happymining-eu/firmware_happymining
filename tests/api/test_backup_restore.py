@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -43,7 +44,8 @@ def test_backup_then_restore_into_scratch_database_and_verify(world, tmp_path):
     env = {
         **os.environ,
         "PGPASSWORD": url.password or "",
-        "HM_PYTHON": os.environ.get("HM_PYTHON", "") or str(REPO / "api" / ".venv" / "bin" / "python"),
+        # The interpreter running this test has the happymining package.
+        "HM_PYTHON": os.environ.get("HM_PYTHON", "") or sys.executable,
     }
     common = ["--host", url.host, "--port", str(url.port), "--user", url.username]
 

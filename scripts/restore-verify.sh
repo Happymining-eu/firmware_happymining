@@ -35,7 +35,16 @@ esac
 [ -f "$DUMP" ] || { echo "dump file not found: $DUMP" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="${HM_PYTHON:-$ROOT/api/.venv/bin/python}"
+# The interpreter that has the happymining package: HM_PYTHON, else the
+# repository's virtual environment, else the python3 running this shell
+# (a CI container with the package installed system-wide).
+if [ -n "${HM_PYTHON:-}" ]; then
+  PY="$HM_PYTHON"
+elif [ -x "$ROOT/api/.venv/bin/python" ]; then
+  PY="$ROOT/api/.venv/bin/python"
+else
+  PY="$(command -v python3)"
+fi
 PSQL=(psql --host "$HOST" --port "$PORT" --username "$USER_NAME" --no-psqlrc --set ON_ERROR_STOP=1 --quiet)
 
 if [ -f "$DUMP.sha256" ]; then

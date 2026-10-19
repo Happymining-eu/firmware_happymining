@@ -396,7 +396,7 @@ def test_plugin_secrets_are_for_administrators_even_on_an_operators_form(dash, w
         r = post(
             operator,
             path,
-            {"enabled": "false", **ASSISTANT_SETTINGS, **extra},
+            {"enabled": "", **ASSISTANT_SETTINGS, **extra},
             csrf=csrf_of(operator),
             revision=0,
         )
@@ -404,7 +404,7 @@ def test_plugin_secrets_are_for_administrators_even_on_an_operators_form(dash, w
     assert revision_of(world, machine) == 0
     # Without a secret the operator configures the plugin.
     ok(
-        post(operator, path, {"enabled": "false", **ASSISTANT_SETTINGS}, csrf=csrf_of(operator), revision=0),
+        post(operator, path, {"enabled": "", **ASSISTANT_SETTINGS}, csrf=csrf_of(operator), revision=0),
         page_of(machine),
     )
     assert row_of(world, machine).document["plugins"] == [
@@ -417,7 +417,7 @@ def test_plugin_secrets_are_for_administrators_even_on_an_operators_form(dash, w
     boss = browser_for(dash, world.user("owner", owner))
     ok(
         post(
-            boss, path, {"enabled": "false", **ASSISTANT_SETTINGS, **sealed}, csrf=csrf_of(boss), revision=1
+            boss, path, {"enabled": "", **ASSISTANT_SETTINGS, **sealed}, csrf=csrf_of(boss), revision=1
         ),
         page_of(machine),
     )
@@ -466,7 +466,7 @@ def test_a_secret_in_clear_text_is_refused_and_a_sealed_one_is_stored_and_never_
     # Clear text where a sealed value is expected: refused, nothing stored, never repeated.
     for fields in (
         {**NAS_FORM, "sealed_secret": clear},
-        {"enabled": "false", **ASSISTANT_SETTINGS, "sealed_secret.api_key": clear},
+        {"enabled": "", **ASSISTANT_SETTINGS, "sealed_secret.api_key": clear},
     ):
         target = f"{path}/nas" if "nas_id" in fields else f"{path}/plugins/assistant"
         r = post(boss, target, fields, csrf=csrf, revision=0)
@@ -531,9 +531,14 @@ def test_a_secret_in_clear_text_is_refused_and_a_sealed_one_is_stored_and_never_
     out = capsys.readouterr()
     assert "hmseal1." not in out.out + out.err and clear not in out.out + out.err
 
-    # Leaving a secret field empty keeps the stored value.
-    ok(post(boss, f"{path}/nas", {**NAS_FORM, "host": "nas2.lan"}, csrf=csrf, revision=3), path)
+    # Leaving a secret field empty keeps the stored value...
+    ok(post(boss, f"{path}/nas", {**NAS_FORM, "subpath": "projects"}, csrf=csrf, revision=3), path)
     assert row_of(world, machine).secrets == values
+    # ...unless the entry now points at another server: the stored password is
+    # not carried over to a new destination and must be sent again, sealed.
+    text = refused(post(boss, f"{path}/nas", {**NAS_FORM, "host": "nas2.lan"}, csrf=csrf, revision=4), path)
+    assert "not carried over" in text
+    assert row_of(world, machine).secrets == values and row_of(world, machine).revision == 4
 
 
 def test_password_fields_have_no_name_and_seal_for_the_machines_key(dash, world):

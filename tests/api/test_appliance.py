@@ -918,7 +918,9 @@ def test_an_administrator_configures_everything_and_takes_it_apart_again(api, wo
         "sealed_set": ["nas.docs.password"],
         "sealed_removed": [],
     }
-    assert rows[14].details["changed"] == ["host"] and rows[14].details["sealed_set"] == []
+    assert rows[14].details["changed"] == ["subpath"] and rows[14].details["sealed_set"] == []  # revision 15
+    assert rows[15].details["changed"] == ["host", "subpath"]
+    assert rows[15].details["sealed_set"] == ["nas.docs.password"]
     assert rows[16].details["sealed_removed"] == ["nas.docs.password"]
     assert rows[13].action == "appliance.mode" and rows[13].details["from"] == "vast"
     assert rows[13].details["to"] == "private_ai" and rows[13].details["gate"] == {"checked": False}

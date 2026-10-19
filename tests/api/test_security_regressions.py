@@ -1417,11 +1417,18 @@ def test_unknown_operation_types_and_free_form_commands_are_refused(client, worl
         "reboot": {"delay_s": 60},
         "run_benchmark": {"duration_s": 60},
         "apply_hardware_profile": {"profile_id": "eco"},
+        # Appliance-only: valid parameters, but the general route refuses the
+        # type itself (they are queued only through the appliance routes).
+        "appliance_run_job": {"job": "backup_run"},
+        "install_update": {"version": "0.2.0"},
     }
     assert set(own_params) == set(operations.OPERATION_TYPES)
     for op_type, params in own_params.items():
         validate = operations.OPERATION_TYPES[op_type]
         assert validate(dict(params)) == params
+        if op_type in operations.APPLIANCE_ONLY_TYPES:
+            r = client.post(url, headers=h, json={"type": op_type, "params": params})
+            assert r.status_code == 400 and envelope(r)["code"] == "invalid_request", op_type
         for name in ("command", "cmd", "shell", "script", "args"):
             for smuggled in ({name: "id"}, {**params, name: "id"}):
                 with pytest.raises(InvalidRequest):

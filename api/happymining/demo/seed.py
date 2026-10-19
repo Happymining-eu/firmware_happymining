@@ -69,7 +69,7 @@ def seed_demo(db: Session, settings: Settings) -> dict[str, object]:
             owner_id=None,
             rate=DEMO_FEE_RATE,
             effective_from=datetime.now(UTC).date() - timedelta(days=90),
-            note="DEMO: 2% management fee on provider-reported earnings (intended rate; confirm for LIVE).",
+            note="DEMO assumption: 2% management fee on provider-reported earnings (intended rate; confirm).",
             created_by=None,
             is_demo_assumption=True,
         )

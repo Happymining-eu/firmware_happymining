@@ -101,7 +101,10 @@ def request(world, settings, provider, machine, op_type, params=None):
 
 def test_there_is_no_shell_only_a_fixed_typed_allowlist(world):
     machine, token, provider = fleet(world)
-    assert set(operations.OPERATION_TYPES) == {
+    # The general routes (this test, the dashboard form, the integration API)
+    # accept exactly these. The two appliance types exist in the table but are
+    # reachable only through the appliance routes (APPLIANCE_ONLY_TYPES).
+    assert set(operations.GENERAL_TYPES) == {
         "refresh_inventory",
         "collect_diagnostics",
         "run_preflight",
@@ -111,6 +114,15 @@ def test_there_is_no_shell_only_a_fixed_typed_allowlist(world):
         "run_benchmark",
         "apply_hardware_profile",
     }
+    appliance_only = {"appliance_run_job", "install_update"}
+    assert set(operations.OPERATION_TYPES) == set(operations.GENERAL_TYPES) | appliance_only
+    appliance_requests = (
+        ("appliance_run_job", {"job": "backup_run"}),
+        ("install_update", {"version": "0.2.0"}),
+    )
+    for appliance_type, params in appliance_requests:
+        with pytest.raises(InvalidRequest):
+            request(world, world.settings, provider, machine, appliance_type, params)
     for bad_type in ("shell", "exec", "run_command", "bash", "", "reboot; rm -rf /"):
         with pytest.raises(InvalidRequest):
             request(world, world.settings, provider, machine, bad_type, {"command": "id"})
