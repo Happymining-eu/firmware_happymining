@@ -5,8 +5,10 @@ version and rate that applied on its day when it was first posted; corrections
 to that bucket reuse the stored rate. A later version therefore cannot change
 what was already accrued.
 
-The 10% used by the demo is a DEMO assumption, flagged as such in the data. It
-is not an approved commercial rate.
+The 2% used by the demo is Happy Mining's intended management fee on
+provider-reported earnings; the demo flags it as an assumption. In LIVE the
+rate is set explicitly: `python -m happymining.cli set-fee --rate 0.02
+--effective-from YYYY-MM-DD` or POST /api/v1/fee-schedules.
 """
 
 from __future__ import annotations

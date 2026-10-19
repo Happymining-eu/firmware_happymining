@@ -14,6 +14,7 @@ import argparse
 import getpass
 import json
 import sys
+import uuid
 
 from sqlalchemy import select
 
@@ -105,6 +106,49 @@ def cmd_seed_demo(_: argparse.Namespace) -> int:
     ensure_database_mode(settings)
     with session_scope() as db:
         print(json.dumps(seed_demo(db, settings), indent=2))
+    return 0
+
+
+def cmd_set_fee(args: argparse.Namespace) -> int:
+    """Create a new default (or per-owner) fee schedule version. Earlier days
+    keep the rate they were posted with; the ledger never rewrites fee history."""
+    from datetime import date
+    from decimal import Decimal, InvalidOperation
+
+    from .audit import Actor
+    from .services import fees
+
+    try:
+        rate = Decimal(args.rate)
+        effective = date.fromisoformat(args.effective_from)
+    except (InvalidOperation, ValueError) as exc:
+        print(f"invalid argument: {exc}", file=sys.stderr)
+        return 2
+    settings = get_settings()
+    settings.validate_for_startup()
+    ensure_database_mode(settings)
+    with session_scope() as db:
+        owner_id = uuid.UUID(args.owner_id) if args.owner_id else None
+        schedule = fees.create_fee_schedule(
+            db,
+            Actor.system("cli:set-fee"),
+            owner_id=owner_id,
+            rate=rate,
+            effective_from=effective,
+            note=args.note,
+            created_by=None,
+        )
+        print(
+            json.dumps(
+                {
+                    "id": str(schedule.id),
+                    "owner_id": str(schedule.owner_id) if schedule.owner_id else None,
+                    "rate": str(schedule.rate),
+                    "effective_from": schedule.effective_from.isoformat(),
+                },
+                indent=2,
+            )
+        )
     return 0
 
 
@@ -228,6 +272,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     role.add_argument("--role", default="happymining_app")
     role.set_defaults(fn=cmd_setup_runtime_role)
+    fee = sub.add_parser("set-fee", help="add a management fee version (default: 2% on every owner)")
+    fee.add_argument("--rate", default="0.02", help="fraction of provider-reported earnings (0.02 = 2%%)")
+    fee.add_argument("--effective-from", required=True, help="first UTC day the rate applies (YYYY-MM-DD)")
+    fee.add_argument("--owner-id", default=None, help="apply to one owner only (default: every owner)")
+    fee.add_argument("--note", default="Happy Mining management fee", help="recorded with the version")
+    fee.set_defaults(fn=cmd_set_fee)
     sub.add_parser("verify", help="verify the ledger and the audit chain").set_defaults(fn=cmd_verify)
     args = parser.parse_args(argv)
     try:

@@ -1,6 +1,8 @@
 """DEMO seed data. Everything created here is flagged synthetic.
 
-Refuses to run in LIVE mode. The 10% management fee is a DEMO assumption, not
+Refuses to run in LIVE mode. The 2% management fee is the rate Happy Mining
+intends to charge (set by the owner on 2026-10-19); in DEMO it is still flagged
+as an assumption, not
 an approved commercial rate.
 """
 
@@ -28,7 +30,7 @@ DEMO_USERS = (
     ("owner-b", "owner", "Demo owner B", 1),
 )
 DEMO_OWNERS = ("Owner A (synthetic)", "Owner B (synthetic)")
-DEMO_FEE_RATE = Decimal("0.10")
+DEMO_FEE_RATE = Decimal("0.02")
 
 
 def seed_demo(db: Session, settings: Settings) -> dict[str, object]:
@@ -67,7 +69,7 @@ def seed_demo(db: Session, settings: Settings) -> dict[str, object]:
             owner_id=None,
             rate=DEMO_FEE_RATE,
             effective_from=datetime.now(UTC).date() - timedelta(days=90),
-            note="DEMO assumption: 10% management fee. Not an approved commercial rate.",
+            note="DEMO: 2% management fee on provider-reported earnings (intended rate; confirm for LIVE).",
             created_by=None,
             is_demo_assumption=True,
         )

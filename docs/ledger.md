@@ -142,15 +142,21 @@ system has no verified provider fee rate to apply.
   attributed days for the default). Fees are never re-priced retroactively.
 - Fee on a bucket = `reported × rate`, rounded half-even to 8 decimals; owner
   share = `reported − fee`, so the two always add up exactly.
-- The 10% in the demo is a **DEMO assumption**, flagged as such in the data. It
-  is not an approved commercial rate.
+- Happy Mining's management fee is **2%** of provider-reported earnings (the
+  owner's decision, 2026-10-19). The demo seeds it flagged as an assumption;
+  in LIVE it is created explicitly, once, with
+  `python -m happymining.cli set-fee --rate 0.02 --effective-from YYYY-MM-DD`
+  (or `POST /api/v1/fee-schedules`), and a later change is a new version from
+  a later day. The fee is taken on what the provider reports as the host's
+  earnings; Vast's own cut is already gone from that figure as far as Vast's
+  documentation says (`HM_VAST_EARNINGS_BASIS`, docs/integration-evidence.md).
 
-Example (DEMO, base already net of provider deductions):
+Example (base already net of provider deductions):
 
 ```
 Eligible settled host earnings   USD 100.00
-HappyMining fee 10%              USD  10.00
-Owner payable                    USD  90.00
+HappyMining fee 2%               USD   2.00
+Owner payable                    USD  98.00
 ```
 
 ## Reconciliation
