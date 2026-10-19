@@ -163,7 +163,7 @@ def build_stub_deb(directory: Path, version: str = "0.1.0", package: str = "happ
     if with_env_default:
         (pkg / "etc/happymining").mkdir(parents=True)
         (pkg / "etc/happymining/agent.env").write_text(
-            "# stub default\nHM_API_URL=https://api.happymining.fr\n#HM_LOG_LEVEL=info\n"
+            "# stub default\nHM_API_URL=https://api.happymining.eu\n#HM_LOG_LEVEL=info\n"
         )
         (pkg / "DEBIAN/conffiles").write_text("/etc/happymining/agent.env\n")
     deb = directory / f"{package}_{version}_amd64.deb"

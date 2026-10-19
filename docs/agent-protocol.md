@@ -4,7 +4,7 @@ This is the contract between the Go agent (`agent/`) and the HappyMining API
 (`api/`). These are **HappyMining's own endpoints**. None of them is a Vast.ai
 endpoint, and the agent never talks to Vast.ai's API or holds a Vast account key.
 
-- Base URL: configurable, e.g. `https://api.happymining.fr`. All paths below are
+- Base URL: configurable, e.g. `https://api.happymining.eu`. All paths below are
   relative to it.
 - Transport: HTTPS with certificate verification against the system trust store
   (optionally an extra CA bundle file). Plain HTTP is accepted by the agent only

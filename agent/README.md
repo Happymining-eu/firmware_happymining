@@ -128,7 +128,7 @@ and must not contain secrets.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `HM_API_URL` | (packaged: `https://api.happymining.fr`) | API base URL. HTTPS only, certificate always verified. |
+| `HM_API_URL` | (packaged: `https://api.happymining.eu`) | API base URL. HTTPS only, certificate always verified. |
 | `HM_HEARTBEAT_INTERVAL_S` | `60` | Seconds between samples, 15 to 3600. The API's `next_interval_s` may change it at run time within the same bounds. |
 | `HM_STATE_DIR` | `/var/lib/happymining` | Identity, credential, sequence counter, operation journal, status file. If you change it, change `StateDirectory=`/`ReadWritePaths=` in a unit drop-in too. |
 | `HM_SPOOL_DIR` | `<state dir>/spool` | Telemetry buffer. |

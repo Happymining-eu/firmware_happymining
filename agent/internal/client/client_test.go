@@ -39,8 +39,8 @@ func TestURLPolicy(t *testing.T) {
 		url   string
 		allow bool
 	}{
-		{"https://api.happymining.fr", false},
-		{"https://api.happymining.fr/base/", false},
+		{"https://api.happymining.eu", false},
+		{"https://api.happymining.eu/base/", false},
 		{"http://127.0.0.1:8080", true},
 		{"http://localhost:8080", true},
 		{"http://[::1]:8080", true},
@@ -56,22 +56,22 @@ func TestURLPolicy(t *testing.T) {
 	}{
 		{"", false},
 		{"http://127.0.0.1:8080", false},              // plain HTTP not enabled
-		{"http://api.happymining.fr", true},           // plain HTTP to a non-loopback host
+		{"http://api.happymining.eu", true},           // plain HTTP to a non-loopback host
 		{"http://10.0.0.5:8080", true},                // private is not loopback
 		{"http://localhost.example.com", true},        // not localhost
-		{"ftp://api.happymining.fr", false},           // scheme
-		{"https://user:pw@api.happymining.fr", false}, // credentials in the URL
-		{"https://api.happymining.fr/?x=1", false},
+		{"ftp://api.happymining.eu", false},           // scheme
+		{"https://user:pw@api.happymining.eu", false}, // credentials in the URL
+		{"https://api.happymining.eu/?x=1", false},
 		{"https://", false},
-		{"api.happymining.fr", false},
+		{"api.happymining.eu", false},
 	}
 	for _, c := range bad {
 		if _, err := ValidateBaseURL(c.url, c.allow); err == nil {
 			t.Errorf("%s (allow=%v) must be refused", c.url, c.allow)
 		}
 	}
-	u, _ := ValidateBaseURL("https://api.happymining.fr/base/", false)
-	if u.String() != "https://api.happymining.fr/base" {
+	u, _ := ValidateBaseURL("https://api.happymining.eu/base/", false)
+	if u.String() != "https://api.happymining.eu/base" {
 		t.Errorf("trailing slash not removed: %s", u)
 	}
 }

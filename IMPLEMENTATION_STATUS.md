@@ -229,9 +229,12 @@ started) and the vectorizer is restarted when it changes.
   fetches exactly one commit and its hash-pinned dependencies.
 - **The appliance is not deployed**: it is only on branch `appliance-wip`, so no deployed
   commit contains it.
-- `happymining.fr` DNS is not in the Hostinger account. `cloud.happymining.fr`
-  and `api.happymining.fr` need A records at the DNS host before they can be
-  used.
+- The control plane's names are `cloud.happymining.eu` and
+  `api.happymining.eu` (A records on Cloudflare, DNS-only, created
+  2026-10-19); `happymining.fr` stays with the shop. The deployed DEMO stack
+  on the VPS still carries `HM_PUBLIC_HOST=cloud.happymining.fr` in its
+  environment and must be redeployed with the `.eu` names before the names
+  serve anything.
 - Caddy (`deploy/Caddyfile*`) lets the firmware upload
   (`PUT /api/v1/releases/{version}/artifact`) through with 512 MB and keeps
   1 MB for everything else (not validated by Caddy here). The Hostinger

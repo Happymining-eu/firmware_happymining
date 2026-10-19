@@ -56,7 +56,7 @@ def install(root, deb, key, *extra, env=None, input=None):
 # ----- dry run ----------------------------------------------------------------
 def test_dry_run_changes_nothing(fake_root, stub_deb, release_key):
     before = tree_hash(fake_root)
-    out = install(fake_root, stub_deb, release_key.pub_asc, "--dry-run", "--api-url", "https://api.happymining.fr")
+    out = install(fake_root, stub_deb, release_key.pub_asc, "--dry-run", "--api-url", "https://api.happymining.eu")
     assert out.returncode == 0, out.stdout + out.stderr
     assert tree_hash(fake_root) == before, "the dry run changed the fake root"
     assert installed_version(fake_root) == ""
@@ -244,7 +244,7 @@ def test_existing_docker_and_vast_installation_is_untouched(fake_root, stub_deb,
     docker_tree = tree_hash(fake_root / "var/lib/docker")
     vast_tree = tree_hash(fake_root / "var/lib/vastai_kaalia")
 
-    out = install(fake_root, stub_deb, release_key.pub_asc, "--yes", "--api-url", "https://api.happymining.fr")
+    out = install(fake_root, stub_deb, release_key.pub_asc, "--yes", "--api-url", "https://api.happymining.eu")
     assert out.returncode == 0, out.stdout + out.stderr
     assert installed_version(fake_root) == "0.1.0"
 

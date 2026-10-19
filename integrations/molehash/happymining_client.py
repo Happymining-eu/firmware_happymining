@@ -6,7 +6,7 @@ backend, or import it from here. The API it talks to is described in
 
     from happymining_client import HappyMiningClient
 
-    hm = HappyMiningClient("https://api.happymining.fr", token)
+    hm = HappyMiningClient("https://api.happymining.eu", token)
     print(hm.describe()["client"]["scopes"])
     for machine in hm.machines():
         print(machine["label"], machine["connection"], machine.get("latest_telemetry"))

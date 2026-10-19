@@ -115,12 +115,13 @@ a dependency change; `make lint` fails if it is stale.
 *before* deploying: Traefik requests a certificate for each name in the
 routing rule, and failed attempts are rate limited by Let's Encrypt.
 
-- `happymining.fr` is on Shopify, and its DNS is not managed in the Hostinger
-  account. To use `cloud.happymining.fr` and `api.happymining.fr`, add A
-  records for those two names pointing at the server's IPv4 address at
-  whoever hosts the zone. This does not touch the shop.
-- Until then the only name that resolves to the server is its Hostinger host
-  name (`srv<id>.hstgr.cloud`).
+- `happymining.fr` is on Shopify and its DNS is not managed in the Hostinger
+  account, so the control plane lives under **`happymining.eu`**, whose DNS is
+  on Cloudflare: `cloud.happymining.eu` and `api.happymining.eu` are A records
+  to the server's IPv4 address, **DNS-only (grey cloud)** so that Traefik's
+  Let's Encrypt HTTP challenge reaches the server directly. Created on
+  2026-10-19 through the Cloudflare API.
+- The Hostinger host name (`srv<id>.hstgr.cloud`) also resolves to the server.
 
 ### The staging gate
 

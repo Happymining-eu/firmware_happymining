@@ -909,10 +909,10 @@ def test_molehash_client_refuses_to_send_the_token_in_clear_text():
     hm_module = load_molehash_client()
     token = "hmc_" + "0" * 32 + "." + "A" * 43
     with pytest.raises(ValueError, match="loopback"):
-        hm_module.HappyMiningClient("http://api.happymining.fr", token)
+        hm_module.HappyMiningClient("http://api.happymining.eu", token)
     with pytest.raises(ValueError, match="hmc_"):
-        hm_module.HappyMiningClient("https://api.happymining.fr", "hms_session-token")
-    hm_module.HappyMiningClient("https://api.happymining.fr", token)  # fine
+        hm_module.HappyMiningClient("https://api.happymining.eu", "hms_session-token")
+    hm_module.HappyMiningClient("https://api.happymining.eu", token)  # fine
     unreachable = hm_module.HappyMiningClient("http://127.0.0.1:9", token, retries=0, timeout=2)
     with pytest.raises(hm_module.HappyMiningError) as failed:
         unreachable.describe()
@@ -1320,7 +1320,7 @@ def test_molehash_client_never_puts_the_token_in_an_error(served, world):
             hm_module.HappyMiningClient(served.url, bad)
         assert token.split(".")[1] not in str(refused.value)
     with pytest.raises(ValueError, match="user name"):
-        hm_module.HappyMiningClient("https://user:pw@api.happymining.fr", token)
+        hm_module.HappyMiningClient("https://user:pw@api.happymining.eu", token)
     # An id cannot steer the request to another path.
     with pytest.raises(hm_module.HappyMiningError) as outside:
         hm.machine("../../../v1/api-clients?x=")
