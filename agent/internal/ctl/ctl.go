@@ -98,6 +98,8 @@ Commands:
   preflight          read-only host checks (PASS / WARN / FAIL)
   appliance          appliance state; local secrets, plugin data, vectorizer token (root)
   backup             create the backup key, restore an archive (root)
+  ui unlock          let the local web page pair this machine for a few minutes
+  ui lock            take that permission back
   vast-enroll-help   how to install the official Vast host software by hand
   version            print the version
 
@@ -151,6 +153,8 @@ func Run(args []string, env Env) int {
 		return a.appliance(rest[1:])
 	case "backup":
 		return a.backup(rest[1:])
+	case "ui":
+		return a.ui(rest[1:])
 	case "vast-enroll-help":
 		fmt.Fprint(env.Stdout, VastEnrollHelp)
 		return ExitOK

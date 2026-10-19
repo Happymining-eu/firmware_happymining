@@ -9,7 +9,9 @@
                                        IPv4: \4
 
   The installation is finished. Three steps make this machine a managed
-  GPU host; run them on this console, or over SSH with the address above.
+  GPU host. Run them on this console or over SSH, or open the machine's
+  own page from a computer on the same network:   http://\4:8080/
+  (the page is read-only until "sudo happyminingctl ui unlock" is run here)
 
     1. Pair it with your HappyMining organisation. Ask your administrator
        for a pairing code (single-use, expires quickly), then:

@@ -22,6 +22,9 @@ if [ ! -e /var/lib/happymining/credential.json ]; then
   Installing the Vast host software is a separate manual step:
                             happyminingctl vast-enroll-help
 
+  From a browser on the same network: http://<this machine>:8080/
+  (read-only until:       sudo happyminingctl ui unlock)
+
 TEXT
 else
     cat <<'TEXT'

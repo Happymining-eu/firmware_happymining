@@ -49,7 +49,7 @@ install -d -m 0755 \
     "$stage/usr/share/happymining/vectorizer" \
     "$stage/usr/share/happymining/release-keys"
 
-install -m 0755 "$dist_dir/bin/happymining-agent" "$dist_dir/bin/happyminingctl" "$stage/usr/bin/"
+install -m 0755 "$dist_dir/bin/happymining-agent" "$dist_dir/bin/happymining-ui" "$dist_dir/bin/happyminingctl" "$stage/usr/bin/"
 install -m 0755 "$dist_dir/bin/hm-helper" "$stage/usr/lib/happymining/hm-helper"
 
 # Every unit file of the packaging tree, whoever added it.
@@ -66,7 +66,7 @@ for unit in "$pkg_dir"/systemd/*; do
     install -m 0644 "$unit" "$stage/lib/systemd/system/$(basename "$unit")"
     units=$((units + 1))
 done
-if [ "$units" -lt 4 ]; then
+if [ "$units" -lt 5 ]; then
     echo "build-deb.sh: only $units unit files found in $pkg_dir/systemd" >&2
     exit 1
 fi
@@ -166,7 +166,7 @@ chmod 0644 "$stage/DEBIAN/control"
 # other message fails the build.
 if command -v systemd-analyze >/dev/null 2>&1; then
     problems=$(systemd-analyze verify "$stage"/lib/systemd/system/happymining-* 2>&1 |
-        grep -v -E '^happymining-[a-z@.-]+: Command /usr/(bin/happymining-agent|bin/happyminingctl|lib/happymining/hm-helper) is not executable: No such file or directory$' || true)
+        grep -v -E '^happymining-[a-z@.-]+: Command /usr/(bin/happymining-agent|bin/happymining-ui|bin/happyminingctl|lib/happymining/hm-helper) is not executable: No such file or directory$' || true)
     if [ -n "$problems" ]; then
         echo "build-deb.sh: systemd-analyze verify reported problems:" >&2
         echo "$problems" >&2

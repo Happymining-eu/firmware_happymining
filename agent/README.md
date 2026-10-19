@@ -35,7 +35,8 @@ Only the Go standard library is used; there is no third-party module.
 | Binary | Installed at | Runs as | What it does |
 |---|---|---|---|
 | `happymining-agent` | `/usr/bin` | user `happymining` (systemd, sandboxed) | Collects a sample every interval, spools it on disk, sends spooled samples oldest first (at most 100 per request and 256 KiB), deletes what the API acknowledged, handles typed operations. |
-| `happyminingctl` | `/usr/bin` | the operator (`sudo` for `pair`, `unpair` and the appliance's local actions) | `identity init`, `pair`, `status`, `unpair`, `preflight`, `vast-enroll-help`, `version`, `appliance status\|secret set\|purge\|token`, `backup init\|restore`. |
+| `happymining-ui` | `/usr/bin` | user `happymining` (systemd, same sandbox as the agent) | Serves the machine's local web page on port 8080: status, agent, GPUs, disks, services, preflight on demand, and pairing once the page is unlocked from the machine. See "Local web page". |
+| `happyminingctl` | `/usr/bin` | the operator (`sudo` for `pair`, `unpair`, `ui unlock` and the appliance's local actions) | `identity init`, `pair`, `status`, `unpair`, `preflight`, `ui unlock\|lock`, `vast-enroll-help`, `version`, `appliance status\|secret set\|purge\|token`, `backup init\|restore`. |
 | `hm-helper` | `/usr/lib/happymining/hm-helper` | root: socket-activated, one process per request, and as the program of the appliance's oneshot units | The only privileged code. Restart of the Vast daemon and delayed reboot (both disabled by default), and the appliance actions (each behind its own switch, all off by default). |
 | `hm-simulator` | not packaged (`dist/bin`) | anyone | Simulates machines without NVIDIA hardware. Every sample is marked `"synthetic": true`. |
 
@@ -78,6 +79,43 @@ Installing the official Vast host software is a separate, manual step:
 `happyminingctl vast-enroll-help` prints the procedure. The operator obtains
 the install command from the Vast console and runs it by hand. No HappyMining
 tool downloads, embeds, stores or automates that command or any Vast key.
+
+## Local web page
+
+`happymining-ui` is what an operator opens from a laptop on the same network
+instead of reading the console: `http://<machine address>:8080/` (the
+console banner and the MOTD print the address). It shows what
+`happyminingctl status` and `preflight` show, plus the agent's own host
+sample (GPUs, memory, disks, services), refreshed every ten seconds.
+
+**Read-only by default, everywhere.** Reaching the page is never enough to
+change the machine. Its one action, pairing, works like a television pairing
+code:
+
+1. On the machine (console or SSH): `sudo happyminingctl ui unlock`. It
+   prints a six-digit code, valid ten minutes (`--minutes N`, at most 60),
+   and writes only the code's hash to `/var/lib/happymining/ui-unlock.json`.
+2. In the browser: type the code. Five wrong attempts cancel the code; a
+   right one deletes the file and opens a thirty-minute session (an
+   `HttpOnly`, `SameSite=Strict` cookie).
+3. Then the pairing form takes the single-use code from HappyMining, and the
+   page calls the same enrolment code as `happyminingctl pair`.
+
+`happyminingctl ui lock` cancels an unlock early. The page has no shell, runs
+no command on behalf of a browser, exposes no route that writes anything but
+the credential, and never shows the credential secret or the pairing code.
+Every response carries a strict content security policy; a request whose
+`Host` is not this machine (an IP address, `localhost` or its host name) is
+refused, so a web site that rebinds its DNS name to the machine's address
+cannot read the page from a browser on the LAN.
+
+What it does not do yet: TLS (the LAN page is plain HTTP; the unlock code and
+the pairing code travel in clear on the local network, both single-use and
+short-lived), authentication for reading (anybody on the network sees the
+machine's status, which is the same information as the console banner and
+`status`), and the appliance's plugin state. To keep the page off the
+network entirely: `systemctl edit happymining-ui` with
+`ExecStart=` then `ExecStart=/usr/bin/happymining-ui --config /etc/happymining/agent.env --listen 127.0.0.1:8080`.
 
 ## Configuration
 
@@ -530,9 +568,9 @@ this directory. Firmware releases are signed with `scripts/release-sign.py`
 
 ### Package content
 
-`/usr/bin/happymining-agent`, `/usr/bin/happyminingctl`,
+`/usr/bin/happymining-agent`, `/usr/bin/happymining-ui`, `/usr/bin/happyminingctl`,
 `/usr/lib/happymining/hm-helper`, every unit of `packaging/systemd/` in
-`/lib/systemd/system` (`happymining-agent.service`,
+`/lib/systemd/system` (`happymining-agent.service`, `happymining-ui.service`,
 `happymining-firstboot.service`, `happymining-helper.socket`,
 `happymining-helper@.service`, `happymining-appliance-apply.service`,
 `happymining-appliance-job@.service`, `happymining-update-install.service`,

@@ -65,12 +65,15 @@ autoinstall:
     # packages.
     - curtin in-target -- sh -c 'dpkg -i /var/cache/happymining/happymining-agent_*.deb'
     # First boot: happymining-firstboot generates this machine's own identity.
-    - curtin in-target -- systemctl enable happymining-firstboot.service happymining-agent.service
+    - curtin in-target -- systemctl enable happymining-firstboot.service happymining-agent.service happymining-ui.service
     # Console message that explains pairing (text only).
     - install -D -m 0644 /cdrom/happymining/issue /target/etc/issue.d/50-happymining-os.issue
     # The agent package's one-line console notice would repeat the banner above;
     # it is a conffile, so dpkg remembers this deletion on upgrades.
     - rm -f /target/etc/issue.d/happymining.issue
+    # First boot: cloud-init otherwise prints every SSH host key over the login
+    # prompt; the fingerprints stay in the journal (journalctl -u cloud-init).
+    - "printf '%s\\n' '# HappyMining OS: keep the console readable on first boot.' 'no_ssh_fingerprints: true' 'ssh:' '  emit_keys_to_console: false' > /target/etc/cloud/cloud.cfg.d/90-happymining-console.cfg"
     # Scheduled security patching with kernel, NVIDIA and container-runtime
     # packages excluded from automatic upgrades (docs/os-maintenance.md).
     - install -D -m 0644 /cdrom/happymining/maintenance/52happymining-unattended-upgrades /target/etc/apt/apt.conf.d/52happymining-unattended-upgrades

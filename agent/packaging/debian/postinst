@@ -27,7 +27,7 @@ HELPER_DIR="$ROOT/var/lib/happymining-helper"
 PLUGINS_DIR="$ROOT/var/lib/happymining-plugins"
 SRV_DIR="$ROOT/srv/happymining"
 NAS_DIR="$SRV_DIR/nas"
-UNITS="happymining-firstboot.service happymining-helper.socket happymining-agent.service"
+UNITS="happymining-firstboot.service happymining-helper.socket happymining-agent.service happymining-ui.service"
 
 case "$1" in
     configure)
@@ -70,6 +70,7 @@ case "$1" in
                 systemctl start happymining-firstboot.service || true
                 systemctl start happymining-helper.socket || true
                 systemctl restart happymining-agent.service || true
+                systemctl restart happymining-ui.service || true
             fi
         else
             echo "happymining-agent: systemctl not found; units were not enabled" >&2

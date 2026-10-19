@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HappyMining OS</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark">Happy<em>Mining</em></span>
+    <span class="product">OS · GPU host</span>
+  </div>
+  <div class="host">
+    <span id="hostname" class="hostname">…</span>
+    <span id="addresses" class="addresses"></span>
+  </div>
+  <div class="live"><span id="dot" class="dot"></span><span id="updated">connecting…</span></div>
+</header>
+
+<main>
+  <section class="card hero" id="pairing-card">
+    <div class="hero-left">
+      <h1 id="pair-title">Checking this machine…</h1>
+      <p id="pair-text" class="muted"></p>
+      <dl class="ids" id="pair-ids" hidden>
+        <dt>Device</dt><dd id="device-id"></dd>
+        <dt>Machine</dt><dd id="machine-id"></dd>
+      </dl>
+    </div>
+    <div class="hero-right">
+      <form id="unlock-form" class="stack" hidden>
+        <label for="unlock-code">Unlock code <span class="hint">shown by <code>sudo happyminingctl ui unlock</code> on the machine</span></label>
+        <div class="row">
+          <input id="unlock-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="6 digits" required>
+          <button type="submit" class="primary">Unlock</button>
+        </div>
+        <p id="unlock-msg" class="msg"></p>
+      </form>
+      <form id="pair-form" class="stack" hidden>
+        <label for="pair-code">Pairing code <span class="hint">from your HappyMining administrator; single use</span></label>
+        <div class="row">
+          <input id="pair-code" autocomplete="off" spellcheck="false" placeholder="HM-XXXXXX-XXXX-XXXX-XXXX-XXXX" required>
+          <button type="submit" class="primary">Pair this machine</button>
+        </div>
+        <p id="pair-msg" class="msg"></p>
+        <button type="button" id="lock-btn" class="link">Lock the page again</button>
+      </form>
+      <div id="locked-note" class="note" hidden>
+        <strong>Read-only.</strong> To pair from this page, somebody with access to the machine runs
+        <code>sudo happyminingctl ui unlock</code> and types the code it prints here.
+      </div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Agent</h2>
+      <dl class="kv">
+        <dt>State</dt><dd id="agent-state">—</dd>
+        <dt>Last heartbeat</dt><dd id="heartbeat">—</dd>
+        <dt>HappyMining API</dt><dd id="api">—</dd>
+        <dt>Buffered samples</dt><dd id="spool">—</dd>
+        <dt>Last error</dt><dd id="last-error" class="wrap">—</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Host</h2>
+      <dl class="kv">
+        <dt>Uptime</dt><dd id="uptime">—</dd>
+        <dt>CPU</dt><dd id="cpu">—</dd>
+        <dt>Memory</dt><dd id="memory">—</dd>
+        <dt>Vast host software</dt><dd id="vast">—</dd>
+      </dl>
+      <div id="disks" class="bars"></div>
+    </section>
+
+    <section class="card">
+      <h2>Services</h2>
+      <ul id="services" class="services"></ul>
+    </section>
+
+    <section class="card wide">
+      <h2>GPUs <span id="gpu-count" class="count"></span></h2>
+      <table id="gpus">
+        <thead><tr><th>#</th><th>Model</th><th>Util</th><th>VRAM</th><th>Temp</th><th>Power</th><th>Fan</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="gpu-empty" class="muted" hidden>No GPU reported. If NVIDIA drivers are installed, check that <code>nvidia-smi</code> works.</p>
+    </section>
+
+    <section class="card wide">
+      <div class="card-head">
+        <h2>Preflight <span class="hint">read-only checks against the Vast requirements</span></h2>
+        <button id="preflight-btn" class="secondary">Run checks</button>
+      </div>
+      <p id="preflight-summary" class="muted">Not run yet.</p>
+      <ul id="preflight-list" class="checks"></ul>
+      <p id="preflight-disclaimer" class="disclaimer"></p>
+    </section>
+  </div>
+
+  <section class="card steps">
+    <h2>Next steps</h2>
+    <ol>
+      <li><strong>Pair</strong> this machine with your organisation (above, or <code>sudo happyminingctl pair</code> on the console).</li>
+      <li><strong>Preflight</strong>: run the checks and fix anything marked FAIL.</li>
+      <li><strong>Vast.ai enrolment</strong> is a manual step on the machine: <code>happyminingctl vast-enroll-help</code>.</li>
+    </ol>
+  </section>
+</main>
+
+<footer><span id="version"></span> · This page never runs commands for you and never shows renter workloads.</footer>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -210,6 +210,7 @@ Where the Happy Mining name appears, and what is deliberately left alone:
 | Boot menu of the medium | Graphical menu: the logo, "HappyMining OS · GPU host installer", the two HappyMining entries first, two one-line hints ("Nothing is written to any disk before you confirm it in the installer."), a 15 s countdown bar | `os/image/branding/logo.png` + `grub-theme.txt.in` rendered by `os/image/render_theme.py` into `/boot/grub/happymining/`; the snippet `grub-look.cfg.in` enables it |
 | The installer itself | Ubuntu's Subiquity, unchanged, reduced to five screens (keyboard, network, disk, account, SSH key) and the confirmation question | `os/autoinstall/user-data.generic.yaml` (`interactive-sections`) |
 | First console after the installation | Wordmark, host name, console and IPv4 address, the three steps (pair, preflight, Vast enrolment) and `happyminingctl status` | `os/image/branding/issue`, installed as `/etc/issue.d/50-happymining-os.issue` |
+| From a laptop on the same network | `http://<machine>:8080/`: the same status as the console, GPUs, disks, services, preflight on demand, and pairing once `sudo happyminingctl ui unlock` has been run on the machine | `happymining-ui` in the agent package (`agent/README.md`, "Local web page") |
 | Every login (console or SSH) | Wordmark and the next step: "NOT PAIRED yet" with the three commands, or "paired" with the status commands | `agent/packaging/motd/60-happymining` (in the agent package) |
 
 **The logo.** `os/image/branding/logo.png` is read by `build-iso.sh` when it

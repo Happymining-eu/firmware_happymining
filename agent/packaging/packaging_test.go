@@ -425,7 +425,7 @@ func TestPostinstFreshInstall(t *testing.T) {
 		"adduser --system --ingroup happymining --no-create-home --home /nonexistent --shell /usr/sbin/nologin",
 		"chown happymining:happymining " + e.root + "/var/lib/happymining\n",
 		"chown root:root " + e.root + "/var/lib/happymining-helper " + e.root + "/var/lib/happymining-plugins " + e.root + "/srv/happymining " + e.root + "/srv/happymining/nas",
-		"systemctl enable happymining-firstboot.service happymining-helper.socket happymining-agent.service",
+		"systemctl enable happymining-firstboot.service happymining-helper.socket happymining-agent.service happymining-ui.service",
 	} {
 		if !strings.Contains(calls, want) {
 			t.Errorf("expected call %q in:\n%s", want, calls)
@@ -574,7 +574,7 @@ func TestRemoveKeepsStateAndPurgeDeletesIt(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(state, "credential.json")); err != nil {
 		t.Fatal("remove (without purge) must keep the state")
 	}
-	if !strings.Contains(e.calls(), "systemctl disable happymining-agent.service happymining-helper.socket happymining-firstboot.service") {
+	if !strings.Contains(e.calls(), "systemctl disable happymining-agent.service happymining-ui.service happymining-helper.socket happymining-firstboot.service") {
 		t.Errorf("prerm remove must disable the units:\n%s", e.calls())
 	}
 	if out, err := e.run("postrm", "purge"); err != nil {
@@ -781,6 +781,8 @@ func TestDebLayoutOwnersAndModes(t *testing.T) {
 	want := map[string]string{
 		"/usr/bin/happymining-agent":                        "-rwxr-xr-x",
 		"/usr/bin/happyminingctl":                           "-rwxr-xr-x",
+		"/usr/bin/happymining-ui":                           "-rwxr-xr-x",
+		"/lib/systemd/system/happymining-ui.service":        "-rw-r--r--",
 		"/usr/lib/happymining/hm-helper":                    "-rwxr-xr-x",
 		"/lib/systemd/system/happymining-agent.service":     "-rw-r--r--",
 		"/lib/systemd/system/happymining-firstboot.service": "-rw-r--r--",

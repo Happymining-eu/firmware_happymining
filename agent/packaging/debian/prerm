@@ -6,13 +6,13 @@
 # appliance's plugins and NAS mounts are not touched.
 set -e
 
-UNITS="happymining-agent.service happymining-helper.socket happymining-firstboot.service"
+UNITS="happymining-agent.service happymining-ui.service happymining-helper.socket happymining-firstboot.service"
 
 case "$1" in
     remove | deconfigure)
         if command -v systemctl >/dev/null 2>&1; then
             if [ -d /run/systemd/system ]; then
-                systemctl stop happymining-agent.service happymining-helper.socket || true
+                systemctl stop happymining-agent.service happymining-ui.service happymining-helper.socket || true
                 systemctl stop happymining-update-guard.timer || true
             fi
             # shellcheck disable=SC2086
@@ -24,7 +24,7 @@ case "$1" in
         # directory is not touched. The update guard stays armed: it is what
         # rolls a failed update back.
         if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            systemctl stop happymining-agent.service || true
+            systemctl stop happymining-agent.service happymining-ui.service || true
         fi
         ;;
     failed-upgrade) ;;

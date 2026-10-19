@@ -39,13 +39,13 @@ export CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 export GOTOOLCHAIN=local GOFLAGS='' GOPROXY=off
 
 mkdir -p "$dist_dir/bin"
-for bin in happymining-agent happyminingctl hm-helper hm-simulator; do
+for bin in happymining-agent happymining-ui happyminingctl hm-helper hm-simulator; do
     (cd "$agent_dir" && go build -trimpath -buildvcs=false \
         -ldflags "-s -w -buildid= -X $module/internal/version.Version=$version" \
         -o "$dist_dir/bin/$bin" "./cmd/$bin")
     touch -d "@$SOURCE_DATE_EPOCH" "$dist_dir/bin/$bin"
 done
 
-(cd "$dist_dir/bin" && sha256sum happymining-agent happyminingctl hm-helper hm-simulator >SHA256SUMS)
+(cd "$dist_dir/bin" && sha256sum happymining-agent happymining-ui happyminingctl hm-helper hm-simulator >SHA256SUMS)
 echo "built version $version into $dist_dir/bin:"
 cat "$dist_dir/bin/SHA256SUMS"
