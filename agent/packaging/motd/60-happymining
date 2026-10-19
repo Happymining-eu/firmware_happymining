@@ -24,6 +24,7 @@ if [ ! -e /var/lib/happymining/credential.json ]; then
 
   From a browser on the same network: http://<this machine>:8080/
   (read-only until:       sudo happyminingctl ui unlock)
+  Wrong keyboard layout?  sudo localectl set-keymap fr   (or us, de, ...)
 
 TEXT
 else

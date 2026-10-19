@@ -69,6 +69,7 @@ Other:
   --username NAME          account to create (default hmadmin). Key login only,
                            locked password, sudo without password.
   --timezone TZ            default Etc/UTC.
+  --keyboard LAYOUT        console keyboard layout (XKB name: fr, us, de, ...); default fr.
   --yes-i-have-read-the-plan
                            skip the interactive typed confirmation.
   --force                  write into an existing, non-empty --out directory.
@@ -96,6 +97,7 @@ DATA_DISK_SERIAL=""
 CONFIRM_ERASE_DATA=""
 USERNAME="hmadmin"
 TIMEZONE="Etc/UTC"
+KEYBOARD_LAYOUT="fr"
 PLAN_ACK=0
 FORCE=0
 
@@ -121,6 +123,7 @@ while [[ $# -gt 0 ]]; do
         --confirm-erase-data-disk) need_value "$@"; CONFIRM_ERASE_DATA="$2"; shift 2 ;;
         --username) need_value "$@"; USERNAME="$2"; shift 2 ;;
         --timezone) need_value "$@"; TIMEZONE="$2"; shift 2 ;;
+        --keyboard) need_value "$@"; KEYBOARD_LAYOUT="$2"; shift 2 ;;
         --yes-i-have-read-the-plan) PLAN_ACK=1; shift ;;
         --force) FORCE=1; shift ;;
         --dry-run) HM_DRY_RUN=1; shift ;;
@@ -214,6 +217,8 @@ fi
     hm_die "$HM_EXIT_USAGE" "--username must be a normal login name (not root, not the agent's system user)"
 [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$ ]] ||
     hm_die "$HM_EXIT_USAGE" "--timezone must look like Etc/UTC or Europe/Paris"
+[[ "$KEYBOARD_LAYOUT" =~ ^[a-z]{2,8}$ ]] ||
+    hm_die "$HM_EXIT_USAGE" "--keyboard must be an XKB layout name such as fr, us or de"
 
 case "$DATA_FS" in
     xfs | ext4) ;;
@@ -475,6 +480,7 @@ render_args=(
     --set "HOSTNAME=$HOSTNAME_ARG"
     --set "USERNAME=$USERNAME"
     --set "TIMEZONE=$TIMEZONE"
+    --set "KEYBOARD_LAYOUT=$KEYBOARD_LAYOUT"
 )
 if [[ "$USE_DATA_DISK" == "1" ]]; then
     render_args+=(

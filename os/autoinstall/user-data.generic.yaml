@@ -28,6 +28,12 @@ autoinstall:
   locale: en_US.UTF-8
   timezone: Etc/UTC
 
+  # Default shown on the keyboard screen (it stays interactive, see above):
+  # Happy Mining's operators are in France. Anyone else picks their layout on
+  # that screen, and it can be changed later: sudo localectl set-keymap <layout>
+  keyboard:
+    layout: fr
+
   # Reproducible installer behaviour: do not replace the installer at run time.
   refresh-installer:
     update: false

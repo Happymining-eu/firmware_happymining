@@ -465,3 +465,27 @@ func TestStateDirectoryCreatedByRootBelongsToTheAgentAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusSaysUnknownWhenTheStateDirectoryIsUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read everything")
+	}
+	f := newFixture(t)
+	if err := os.MkdirAll(f.stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.stateDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.stateDir, 0o700) })
+	if exit := f.run("status"); exit != ExitOK {
+		t.Fatalf("%d %s", exit, f.output())
+	}
+	out := f.output()
+	if !strings.Contains(out, "Pairing:        unknown") || !strings.Contains(out, "run with sudo") {
+		t.Errorf("status should say the pairing state is unknown, not 'not paired':\n%s", out)
+	}
+	if strings.Contains(out, "not paired") || strings.Contains(out, "credential problem") {
+		t.Errorf("misleading wording:\n%s", out)
+	}
+}

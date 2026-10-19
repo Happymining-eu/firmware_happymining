@@ -453,6 +453,7 @@ def render_dummy(dedicated_data_disk: bool) -> str:
         "HOSTNAME": "hm-dummy-host",
         "USERNAME": "hmadmin",
         "TIMEZONE": "Etc/UTC",
+        "KEYBOARD_LAYOUT": "fr",
     }
     flags = {"DATA_ON_ROOT_DISK"}
     if dedicated_data_disk:

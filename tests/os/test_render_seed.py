@@ -279,3 +279,15 @@ def test_several_public_keys_are_all_installed(tmp_path):
     assert out.returncode == 0, out.stderr
     ai = yaml_load((tmp_path / "seed/user-data").read_text())["autoinstall"]
     assert ai["user-data"]["users"][0]["ssh_authorized_keys"] == lines
+
+
+def test_keyboard_layout_defaults_to_fr_and_is_an_option(tmp_path, pubkey_file):
+    out = run(args(pubkey_file, tmp_path / "a") + ["--yes-i-have-read-the-plan"])
+    assert out.returncode == 0, out.stderr
+    assert yaml_load((tmp_path / "a/user-data").read_text())["autoinstall"]["keyboard"] == {"layout": "fr"}
+    out = run(args(pubkey_file, tmp_path / "b") + ["--keyboard", "us", "--yes-i-have-read-the-plan"])
+    assert out.returncode == 0, out.stderr
+    assert yaml_load((tmp_path / "b/user-data").read_text())["autoinstall"]["keyboard"] == {"layout": "us"}
+    out = run(args(pubkey_file, tmp_path / "c") + ["--keyboard", "fr; rm -rf /", "--yes-i-have-read-the-plan"])
+    assert out.returncode == 2 and "XKB layout" in out.stderr
+    assert not (tmp_path / "c").exists()

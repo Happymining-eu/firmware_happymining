@@ -146,6 +146,8 @@ Menu entry 1, **"Install HappyMining OS"**, boots the installer with
 
 - makes `storage`, `identity`, `network`, `keyboard` and `ssh` **interactive**:
   the Ubuntu installer UI asks which disk to use and which account to create;
+  the keyboard screen opens on the French layout (`fr`) and takes any other
+  one; after the installation `sudo localectl set-keymap <layout>` changes it;
 - selects no disk and contains no password, SSH key, pairing code, API or Vast
   credential;
 - installs the OpenSSH server (password login off by default), copies the agent

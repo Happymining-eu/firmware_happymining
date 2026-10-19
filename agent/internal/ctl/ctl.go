@@ -399,6 +399,7 @@ func (a *app) unpair(args []string) int {
 type StatusReport struct {
 	Version         string            `json:"version"`
 	Paired          bool              `json:"paired"`
+	PairingUnknown  bool              `json:"pairing_unknown,omitempty"`
 	DeviceID        string            `json:"device_id,omitempty"`
 	MachineID       string            `json:"machine_id,omitempty"`
 	CredentialID    string            `json:"credential_id,omitempty"`
@@ -444,7 +445,10 @@ func (a *app) status(args []string) int {
 		rep.DeviceID, rep.MachineID, rep.CredentialID = cred.DeviceID, cred.MachineID, cred.CredentialID
 	case errors.Is(err, credential.ErrNotPaired):
 	case errors.Is(err, fs.ErrPermission):
-		rep.CredentialError = "cannot read the credential file (run with sudo)"
+		// The state directory is readable by root and the agent account only:
+		// as another user we cannot tell whether the machine is paired.
+		rep.PairingUnknown = true
+		rep.CredentialError = "cannot read the state directory as this user; run with sudo to see the pairing state"
 	default:
 		rep.CredentialError = redactor.String(err.Error())
 	}
@@ -502,13 +506,16 @@ func (a *app) status(args []string) int {
 	}
 	w := a.env.Stdout
 	fmt.Fprintf(w, "happyminingctl %s\n\n", rep.Version)
-	if rep.Paired {
+	switch {
+	case rep.Paired:
 		fmt.Fprintf(w, "Pairing:        paired\n  device id:     %s\n  machine id:    %s\n  credential id: %s\n",
 			rep.DeviceID, rep.MachineID, rep.CredentialID)
-	} else {
+	case rep.PairingUnknown:
+		fmt.Fprintf(w, "Pairing:        unknown - %s\n", rep.CredentialError)
+	default:
 		fmt.Fprintln(w, "Pairing:        not paired (run: sudo happyminingctl pair)")
 	}
-	if rep.CredentialError != "" {
+	if rep.CredentialError != "" && !rep.PairingUnknown {
 		fmt.Fprintf(w, "  credential problem: %s\n", rep.CredentialError)
 	}
 	fmt.Fprintf(w, "Agent state:    %s\n", rep.AgentState)

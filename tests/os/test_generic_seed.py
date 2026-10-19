@@ -40,8 +40,13 @@ def test_nothing_selects_a_disk():
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
     assert not re.search(r"/dev/(sd|nvme|vd|hd|xvd|mmcblk)", code)
     assert "/dev/disk/" not in code
-    for word in ("match:", "layout:", "serial:", "wipe:", "ptable:"):
+    for word in ("match:", "serial:", "wipe:", "ptable:"):
         assert word not in code
+    # "layout:" is also the storage layout key; the only one allowed is the
+    # keyboard layout, directly under "keyboard:".
+    layouts = [ln for ln in code.splitlines() if "layout:" in ln]
+    assert layouts == ["    layout: fr"], layouts
+    assert re.search(r"^  keyboard:\n    layout: fr$", code, re.M)
 
 
 def test_no_credentials_of_any_kind():
@@ -132,3 +137,9 @@ def test_motd_is_valid_shell_and_names_the_next_step():
     paired = "is paired with HappyMining" in out.stdout and "happyminingctl status" in out.stdout
     assert unpaired or paired
     assert "credential" not in out.stdout                     # the state is shown, the file is not
+
+
+def test_keyboard_screen_is_shown_and_opens_on_the_french_layout():
+    ai = generic()
+    assert "keyboard" in ai["interactive-sections"]
+    assert ai["keyboard"] == {"layout": "fr"}
