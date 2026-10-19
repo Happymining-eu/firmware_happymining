@@ -1,10 +1,18 @@
 #!/bin/sh
 # /etc/update-motd.d/60-happymining - shown at login by pam_motd.
-# It only prints text. It never starts pairing by itself.
+# It only prints text. It never starts pairing by itself, and it does not
+# read the credential: it only checks whether the file exists.
+cat <<'MARK'
+
+   _  _                       __  __ _      _
+  | || |__ _ _ __ _ __ _  _  |  \/  (_)_ _ (_)_ _  __ _
+  | __ / _` | '_ \ '_ \ || | | |\/| | | ' \| | ' \/ _` |
+  |_||_\__,_| .__/ .__/\_, | |_|  |_|_|_||_|_|_||_\__, |
+            |_|  |_|   |__/                       |___/
+MARK
 if [ ! -e /var/lib/happymining/credential.json ]; then
     cat <<'TEXT'
-
-  HappyMining: this machine is not paired yet.
+  This machine is NOT PAIRED yet. Three steps, in this order:
 
     1. Check the host:      sudo happyminingctl preflight
     2. Pair it:             sudo happyminingctl pair
@@ -13,6 +21,15 @@ if [ ! -e /var/lib/happymining/credential.json ]; then
 
   Installing the Vast host software is a separate manual step:
                             happyminingctl vast-enroll-help
+
+TEXT
+else
+    cat <<'TEXT'
+  This machine is paired with HappyMining.
+
+    Status and last report:   happyminingctl status
+    Hardware check:           happyminingctl preflight
+    Vast.ai enrolment help:   happyminingctl vast-enroll-help
 
 TEXT
 fi

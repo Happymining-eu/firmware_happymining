@@ -2,7 +2,8 @@
 """Add the HappyMining OS menu entries to the GRUB configuration of an Ubuntu
 Server live ISO, and keep md5sum.txt consistent.
 
-  patch_grub.py grub --in ORIGINAL_grub.cfg --entries grub-entries.cfg.in --out NEW_grub.cfg
+  patch_grub.py grub --in ORIGINAL_grub.cfg --entries grub-entries.cfg.in [--look grub-look.cfg.in]
+                     --out NEW_grub.cfg
   patch_grub.py md5  --in ORIGINAL_md5sum.txt --root STAGED_TREE --out NEW_md5sum.txt PATH...
 
 "grub": the kernel and initrd paths are taken from the first menu entry of the
@@ -10,6 +11,8 @@ ORIGINAL configuration that boots the live system (a "linux" line with a
 /casper/ kernel), so the HappyMining entries always use the same files as
 Ubuntu's own entry. The new entries are inserted before the first original
 menu entry and therefore become the default. Every original entry is kept.
+With --look, the "look" snippet (timeout, graphical terminal and theme; no
+menu entry and no kernel line) is inserted just before the entries.
 The result is refused if any kernel command line (original or new) contains
 the "autoinstall" keyword: that keyword removes the installer's confirmation
 prompt and must never be baked into the distributed image.
@@ -81,9 +84,27 @@ def find_live_entry(lines: list[str]) -> tuple[int, str, str]:
     )
 
 
-def patch_grub(original: str, entries_template: str) -> str:
+def check_look(look: str) -> None:
+    """The look snippet may set variables, load modules and a theme; nothing else."""
+    for lineno, line in enumerate(look.splitlines(), start=1):
+        stripped = line.strip()
+        if MENUENTRY_RE.match(line) or LINUX_RE.match(line) or INITRD_RE.match(line):
+            raise PatchError(
+                f"look snippet line {lineno}: menu entries and kernel lines do not belong in the look snippet"
+            )
+        if stripped.startswith(("linux16", "chainloader", "configfile", "source")):
+            raise PatchError(
+                f"look snippet line {lineno}: '{stripped.split()[0]}' is not allowed in the look snippet"
+            )
+    if "HappyMining OS boot menu look" not in look:
+        raise PatchError("the look snippet is not marked as the HappyMining OS boot menu look")
+
+
+def patch_grub(original: str, entries_template: str, look: str | None = None) -> str:
     if "HappyMining OS entries" in original:
         raise PatchError("this grub.cfg already contains HappyMining OS entries")
+    if look is not None:
+        check_look(look)
     hits = kernel_lines_with_autoconfirm(original)
     if hits:
         raise PatchError(
@@ -97,7 +118,10 @@ def patch_grub(original: str, entries_template: str) -> str:
     entries = entries_template.replace("@@KERNEL@@", kernel).replace("@@INITRD@@", initrd)
     if "@@" in entries:
         raise PatchError("unresolved marker in the entries template")
-    new_lines = lines[:first_menu] + entries.rstrip("\n").splitlines() + lines[first_menu:]
+    inserted = entries.rstrip("\n").splitlines()
+    if look is not None:
+        inserted = look.rstrip("\n").splitlines() + inserted
+    new_lines = lines[:first_menu] + inserted + lines[first_menu:]
     result = "\n".join(new_lines) + "\n"
     hits = kernel_lines_with_autoconfirm(result)
     if hits:
@@ -149,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     g = sub.add_parser("grub")
     g.add_argument("--in", dest="src", required=True)
     g.add_argument("--entries", required=True)
+    g.add_argument("--look", help="snippet with the boot menu look (timeout, theme); optional")
     g.add_argument("--out", required=True)
     m = sub.add_parser("md5")
     m.add_argument("--in", dest="src", required=True)
@@ -160,8 +185,12 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.src, encoding="utf-8") as fh:
             original = fh.read()
         if args.command == "grub":
+            look = None
+            if args.look:
+                with open(args.look, encoding="utf-8") as fh:
+                    look = fh.read()
             with open(args.entries, encoding="utf-8") as fh:
-                result = patch_grub(original, fh.read())
+                result = patch_grub(original, fh.read(), look)
         else:
             result = patch_md5(original, args.root, args.paths)
         with open(args.out, "w", encoding="utf-8") as fh:

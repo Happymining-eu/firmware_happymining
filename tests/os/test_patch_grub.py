@@ -23,7 +23,8 @@ def test_entries_are_added_first_and_originals_are_kept(tmp_path):
     assert out.returncode == 0, out.stderr
     text = new.read_text()
     titles = re.findall(r"^menuentry [\"']([^\"']+)[\"']", text, re.M)
-    assert titles[:2] == ["Install HappyMining OS", "Install HappyMining OS with a per-machine seed volume (CIDATA)"]
+    assert titles[:2] == ["Install HappyMining OS",
+                          "Advanced: install HappyMining OS with a per-machine seed volume (CIDATA)"]
     assert titles[2:] == ["Try or Install Ubuntu Server", "Ubuntu Server with the HWE kernel", "Boot from next volume",
                           "UEFI Firmware Settings", "Test memory"]
     original = ORIGINAL.read_text()
@@ -91,3 +92,45 @@ def test_md5sum_list_is_updated_for_changed_and_added_files(tmp_path):
         "22222222222222222222222222222222  ./casper/vmlinuz",
         hashlib.md5(b"banner\n").hexdigest() + "  ./happymining/issue",
     ]
+
+
+LOOK = IMAGE_DIR / "branding/grub-look.cfg.in"
+
+
+def test_look_snippet_goes_before_the_entries_and_keeps_kernel_lines_untouched(tmp_path):
+    out_file = tmp_path / "look.cfg"
+    out = run(["python3", PATCH, "grub", "--in", ORIGINAL, "--entries", ENTRIES, "--look", LOOK,
+               "--out", out_file])
+    assert out.returncode == 0, out.stderr
+    text = out_file.read_text()
+    assert text.index("HappyMining OS boot menu look") < text.index('menuentry "Install HappyMining OS"')
+    assert text.index("loadfont unicode") < text.index("HappyMining OS boot menu look")
+    assert "set theme=/boot/grub/happymining/theme.txt" in text
+    assert "terminal_output gfxterm" in text
+    # The look is guarded: without the theme file GRUB keeps Ubuntu's text menu.
+    assert "if [ -f /boot/grub/happymining/theme.txt ]; then" in text
+    # The same kernel lines as without --look; nothing graphical leaks onto them.
+    plain = patch(tmp_path)[1].read_text()
+    kernel = lambda s: [ln.split() for ln in s.splitlines() if re.match(r"\s*linux\s", ln)]  # noqa: E731
+    assert kernel(text) == kernel(plain)
+    for line in ORIGINAL.read_text().splitlines():
+        assert line in text.splitlines()
+    check = run(["python3", AUTOINSTALL_DIR / "validate.py", "--grub-cfg", out_file])
+    assert check.returncode == 0, check.stdout
+
+
+def test_look_snippet_may_not_carry_entries_or_kernel_lines(tmp_path):
+    for bad in ("menuentry 'x' {\n}\n", "linux /casper/vmlinuz autoinstall ---\n",
+                "configfile /boot/grub/other.cfg\n"):
+        look = tmp_path / "look.in"
+        look.write_text("# HappyMining OS boot menu look\n" + bad)
+        out = run(["python3", PATCH, "grub", "--in", ORIGINAL, "--entries", ENTRIES, "--look", look,
+                   "--out", tmp_path / "o.cfg"])
+        assert out.returncode == 1, bad
+        assert "look snippet" in out.stderr
+        assert not (tmp_path / "o.cfg").exists()
+    unmarked = tmp_path / "unmarked.in"
+    unmarked.write_text("set timeout=5\n")
+    out = run(["python3", PATCH, "grub", "--in", ORIGINAL, "--entries", ENTRIES, "--look", unmarked,
+               "--out", tmp_path / "o.cfg"])
+    assert out.returncode == 1 and "not marked" in out.stderr

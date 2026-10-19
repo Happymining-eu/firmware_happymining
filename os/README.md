@@ -183,8 +183,8 @@ os/autoinstall/make-seed-volume.sh --seed-dir ~/hm-seeds/gpu-01 --out ~/hm-seeds
 ```
 
 Boot the HappyMining OS medium with the seed volume (label `CIDATA`) attached
-and choose menu entry 2, "Install HappyMining OS with a per-machine seed volume
-(CIDATA)". The installer still asks for confirmation on the console.
+and choose menu entry 2, "Advanced: install HappyMining OS with a per-machine
+seed volume (CIDATA)". The installer still asks for confirmation on the console.
 
 Default partition plan (GPT, UEFI only):
 
@@ -200,6 +200,40 @@ No swap. With `--data-disk-by-id`, `--data-disk-serial` and
 disk (also erased). Vast's requirement reads "Dedicated drive for Docker
 container storage: 200 GB"; the script warns when the data filesystem shares
 the system disk.
+
+## Branding and the installer experience
+
+Where the Happy Mining name appears, and what is deliberately left alone:
+
+| Moment | What the operator sees | Where it comes from |
+|---|---|---|
+| Boot menu of the medium | Graphical menu: the logo, "HappyMining OS · GPU host installer", the two HappyMining entries first, two one-line hints ("Nothing is written to any disk before you confirm it in the installer."), a 15 s countdown bar | `os/image/branding/logo.png` + `grub-theme.txt.in` rendered by `os/image/render_theme.py` into `/boot/grub/happymining/`; the snippet `grub-look.cfg.in` enables it |
+| The installer itself | Ubuntu's Subiquity, unchanged, reduced to five screens (keyboard, network, disk, account, SSH key) and the confirmation question | `os/autoinstall/user-data.generic.yaml` (`interactive-sections`) |
+| First console after the installation | Wordmark, host name, console and IPv4 address, the three steps (pair, preflight, Vast enrolment) and `happyminingctl status` | `os/image/branding/issue`, installed as `/etc/issue.d/50-happymining-os.issue` |
+| Every login (console or SSH) | Wordmark and the next step: "NOT PAIRED yet" with the three commands, or "paired" with the status commands | `agent/packaging/motd/60-happymining` (in the agent package) |
+
+**The logo.** `os/image/branding/logo.png` is read by `build-iso.sh` when it
+exists (or pass `--logo FILE`; `--no-logo` forces the plain text menu). Any
+PNG works; it is shown at its natural size and scaled down proportionally when
+larger than 440x140 px, so a wordmark around 400x100 px, white or light on a
+transparent background, looks right on the dark menu. Without a logo file the
+build prints a warning and keeps Ubuntu's text menu: the logo is never a
+build-breaking prerequisite. The sha256 of the logo that went in is recorded
+in the `.buildinfo` file.
+
+**What the theme does not change.** The kernel command lines, the Ubuntu
+entries (still present, below ours) and the squashfs are untouched; the look
+snippet is guarded (`if [ -f /boot/grub/happymining/theme.txt ]` and
+`terminal_output gfxterm` must succeed), so a GRUB build without the
+graphical modules falls back to the text menu rather than failing to boot.
+The installer screens cannot be rebranded without rebuilding Ubuntu's
+squashfs, which this project does not do (see "Safety model").
+
+**Not boot-tested here.** The theme has been rendered and the GRUB
+configuration checked by `tests/os`, but no built image has been booted in
+this environment: the first `os/smoke/qemu-smoke.sh` run is also the first
+look at the real menu. If the menu comes up as plain text, GRUB printed why
+on the console just before it.
 
 ## Safety model for destructive installs
 
@@ -316,7 +350,9 @@ os/image/build-installer.sh          entry point for `make build-installer`
 os/image/build-iso.sh                xorriso repack of the verified Ubuntu ISO
 os/image/patch_grub.py               adds menu entries, updates md5sum.txt
 os/image/secret_scan.py              secret scanner for distributed trees
-os/image/branding/                   banner text and menu entry template
+os/image/branding/                   console banner, menu entries, boot menu look and theme
+os/image/branding/logo.png           the Happy Mining logo shown on the boot menu (PNG, optional)
+os/image/render_theme.py             renders the GRUB theme from the logo
 os/maintenance/                      patch policy files and opt-in script
 os/release/make-checksums.sh         SHA256SUMS + detached signature
 os/release/gen-dev-signing-key.sh    local development signing key

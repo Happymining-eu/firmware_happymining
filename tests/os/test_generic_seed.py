@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from hm_os_testlib import AUTOINSTALL_DIR, IMAGE_DIR, run, validate, yaml_load
+from hm_os_testlib import AUTOINSTALL_DIR, IMAGE_DIR, REPO, run, validate, yaml_load
 
 GENERIC = AUTOINSTALL_DIR / "user-data.generic.yaml"
 
@@ -108,3 +108,27 @@ def test_console_banner_explains_pairing_without_secrets():
     assert "happyminingctl vast-enroll-help" in banner
     scan = run(["python3", IMAGE_DIR / "secret_scan.py", IMAGE_DIR / "branding"])
     assert scan.returncode == 0, scan.stdout
+
+
+def test_console_banner_wordmark_survives_agetty_escapes():
+    """agetty treats backslash sequences in /etc/issue as escapes; the wordmark
+    rows therefore carry doubled backslashes, and only \\n, \\l and \\4 appear
+    single (host name, console name, IPv4 address)."""
+    banner = (IMAGE_DIR / "branding/issue").read_text()
+    singles = set(re.findall(r"(?<!\\)\\(?!\\)(.)", banner.replace("\\\\", "")))
+    assert singles == {"n", "l", "4"}, singles
+    assert "Happy" not in banner.splitlines()[1]            # the name is drawn, not typed, in the art
+    assert all(ord(c) < 128 for c in banner), "the console font may lack non-ASCII glyphs"
+    assert "Lost?" in banner and "happyminingctl status" in banner
+
+
+def test_motd_is_valid_shell_and_names_the_next_step():
+    motd = REPO / "agent/packaging/motd/60-happymining"
+    assert run(["sh", "-n", motd]).returncode == 0
+    out = run(["sh", motd])
+    assert out.returncode == 0, out.stderr
+    assert "|_||_" in out.stdout                               # the wordmark
+    unpaired = "NOT PAIRED" in out.stdout and "sudo happyminingctl pair" in out.stdout
+    paired = "is paired with HappyMining" in out.stdout and "happyminingctl status" in out.stdout
+    assert unpaired or paired
+    assert "credential" not in out.stdout                     # the state is shown, the file is not

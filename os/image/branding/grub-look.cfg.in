@@ -1,0 +1,17 @@
+# --- HappyMining OS boot menu look (added by os/image/build-iso.sh) ---------
+# Graphical menu with the Happy Mining logo. Every step is guarded: if the
+# video or theme modules are not available, GRUB keeps the plain text menu
+# that Ubuntu ships. The kernel command lines are not touched here.
+set timeout=15
+set default=0
+if [ -f /boot/grub/happymining/theme.txt ]; then
+	insmod all_video
+	insmod gfxterm
+	insmod png
+	insmod gfxmenu
+	set gfxmode=auto
+	if terminal_output gfxterm; then
+		set theme=/boot/grub/happymining/theme.txt
+	fi
+fi
+# --- end of HappyMining OS boot menu look ------------------------------------

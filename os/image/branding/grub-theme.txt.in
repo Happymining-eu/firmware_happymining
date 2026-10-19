@@ -1,0 +1,90 @@
+# HappyMining OS — GRUB theme for the installation medium.
+# Rendered by os/image/render_theme.py: @@LOGO_W@@ / @@LOGO_H@@ become the
+# display size of logo.png (scaled down proportionally when the file is
+# larger than 440x140), the colours come from the same script. Positions are
+# percentages of the screen so the layout works at any resolution.
+
+title-text: ""
+desktop-color: "@@BG@@"
+terminal-font: "Unicode Regular"
+terminal-left: 0
+terminal-top: 0
+terminal-width: 100%
+terminal-height: 100%
+terminal-border: 0
+
+# Logo, centred near the top.
++ image {
+	left = 50%-@@LOGO_HALF_W@@
+	top = 9%
+	width = @@LOGO_W@@
+	height = @@LOGO_H@@
+	file = "logo.png"
+}
+
++ label {
+	left = 0
+	top = 9%+@@TITLE_OFFSET@@
+	width = 100%
+	height = 24
+	align = "center"
+	color = "@@FG@@"
+	font = "Unicode Regular"
+	text = "HappyMining OS  ·  GPU host installer"
+}
+
++ boot_menu {
+	left = 20%
+	top = 40%
+	width = 60%
+	height = 36%
+	item_font = "Unicode Regular"
+	item_color = "@@MUTED@@"
+	selected_item_font = "Unicode Regular"
+	selected_item_color = "@@FG@@"
+	selected_item_pixmap_style = "select_*.png"
+	item_height = 30
+	item_padding = 4
+	item_spacing = 8
+	item_icon_space = 0
+	icon_width = 0
+	icon_height = 0
+	scrollbar = false
+}
+
++ label {
+	left = 0
+	top = 79%
+	width = 100%
+	height = 20
+	align = "center"
+	color = "@@MUTED@@"
+	font = "Unicode Regular"
+	text = "Arrow keys to choose, Enter to start."
+}
+
++ label {
+	left = 0
+	top = 83%
+	width = 100%
+	height = 20
+	align = "center"
+	color = "@@MUTED@@"
+	font = "Unicode Regular"
+	text = "Nothing is written to any disk before you confirm it in the installer."
+}
+
++ progress_bar {
+	id = "__timeout__"
+	left = 25%
+	top = 90%
+	width = 50%
+	height = 22
+	show_text = true
+	font = "Unicode Regular"
+	text_color = "@@FG@@"
+	fg_color = "@@ACCENT@@"
+	bg_color = "@@BAR_BG@@"
+	border_color = "@@BAR_BG@@"
+	text = "@TIMEOUT_NOTIFICATION_SHORT@"
+}

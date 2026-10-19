@@ -525,7 +525,7 @@ Next steps:
          os/autoinstall/make-seed-volume.sh --seed-dir $OUT_ABS --out /path/to/seed-$HOSTNAME_ARG.iso
   2. Boot the machine from the HappyMining OS installation medium with the seed
      volume attached and choose
-         "Install HappyMining OS with a per-machine seed volume (CIDATA)".
+         "Advanced: install HappyMining OS with a per-machine seed volume (CIDATA)".
   3. The installer asks "Continue with autoinstall? (yes|no)" before it erases
      the disk. Answer yes on the console.
   4. Keep this directory private and delete it when the machine is installed.

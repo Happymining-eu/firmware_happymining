@@ -52,6 +52,12 @@ Payload:
   --signing-key FPR        which secret key to use when the home holds several
   --allow-unsigned-dev     build without that signature (development only)
 
+Boot menu look:
+  --logo FILE              PNG shown on the graphical boot menu
+                           (default: os/image/branding/logo.png)
+  --no-logo                plain text boot menu, no theme (the default when
+                           the default logo file is absent)
+
 Output:
   --dist DIR               output directory (default: <repo>/dist)
   --out FILE               ISO file (default:
@@ -78,11 +84,15 @@ ALLOW_UNSIGNED=0
 DIST_DIR="$REPO_DIR/dist"
 OUT=""
 STAGE_ONLY=""
+LOGO_FILE=""
+NO_LOGO=0
 
 need_value() { [[ $# -ge 2 ]] || hm_die "$HM_EXIT_USAGE" "$1 needs a value"; }
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --base-iso) need_value "$@"; BASE_ISO="$2"; shift 2 ;;
+        --logo) need_value "$@"; LOGO_FILE="$2"; shift 2 ;;
+        --no-logo) NO_LOGO=1; shift ;;
         --download) DOWNLOAD=1; shift ;;
         --cache-dir) need_value "$@"; CACHE_DIR="$2"; shift 2 ;;
         --ubuntu-sums-dir) need_value "$@"; SUMS_DIR="$2"; shift 2 ;;
@@ -110,8 +120,33 @@ fi
 GENERIC_SEED="$OS_DIR/autoinstall/user-data.generic.yaml"
 GENERIC_META="$OS_DIR/autoinstall/meta-data.generic"
 GRUB_ENTRIES="$SCRIPT_DIR/branding/grub-entries.cfg.in"
+GRUB_LOOK="$SCRIPT_DIR/branding/grub-look.cfg.in"
+GRUB_THEME_TEMPLATE="$SCRIPT_DIR/branding/grub-theme.txt.in"
 ISSUE_FILE="$SCRIPT_DIR/branding/issue"
 POLICY_DIR="$OS_DIR/maintenance"
+
+# The boot menu theme is built only when a logo is there: with --logo FILE the
+# file must exist; without it, branding/logo.png is used when present.
+if [[ -n "$LOGO_FILE" && "$NO_LOGO" == "1" ]]; then
+    hm_die "$HM_EXIT_USAGE" "--logo and --no-logo cannot be combined"
+fi
+if [[ "$NO_LOGO" == "1" ]]; then
+    LOGO_FILE=""
+elif [[ -n "$LOGO_FILE" ]]; then
+    [[ -f "$LOGO_FILE" ]] || hm_die "$HM_EXIT_USAGE" "logo not found: $LOGO_FILE"
+elif [[ -f "$SCRIPT_DIR/branding/logo.png" ]]; then
+    LOGO_FILE="$SCRIPT_DIR/branding/logo.png"
+fi
+
+stage_boot_theme() {
+    # stage_boot_theme DIR — DIR becomes /boot/grub/happymining on the medium.
+    # Returns 1 (and stages nothing) when no logo is configured.
+    [[ -n "$LOGO_FILE" ]] || return 1
+    python3 "$SCRIPT_DIR/render_theme.py" --logo "$LOGO_FILE" --template "$GRUB_THEME_TEMPLATE" --out "$1" ||
+        hm_die "$HM_EXIT_FAIL" "could not render the boot menu theme from $LOGO_FILE"
+    find "$1" -type d -exec chmod 0755 {} +
+    find "$1" -type f -exec chmod 0644 {} +
+}
 
 # ---------------------------------------------------------------------------
 # Payload staging (shared by the real build and --stage-only)
@@ -240,10 +275,16 @@ PLAN
  4. Validate the autoinstall files: python3 $OS_DIR/autoinstall/validate.py
  5. Stage /happymining (agent package, generic seed, banner, patch policy,
     SHA256SUMS$([[ -n "$SIGN_HOME" ]] && echo ", SHA256SUMS.gpg signed with the key in $SIGN_HOME" || echo "; UNSIGNED development build")).
- 6. Take grub.cfg and md5sum.txt out of the base ISO and add the menu entries:
+ 6. Take grub.cfg and md5sum.txt out of the base ISO and add the menu entries
+    (boot menu theme: $(if [[ -n "$LOGO_FILE" ]]; then echo "rendered from $LOGO_FILE into /boot/grub/happymining"; else echo "none, no logo file; plain text menu"; fi)):
 PLAN
     printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd xorriso -osirrox on -indev "${BASE_ISO:-$CACHE_DIR/$UBUNTU_ISO_FILENAME}" -extract /boot/grub/grub.cfg "$W/orig/grub.cfg" -extract /md5sum.txt "$W/orig/md5sum.txt")"
-    printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd python3 "$SCRIPT_DIR/patch_grub.py" grub --in "$W/orig/grub.cfg" --entries "$GRUB_ENTRIES" --out "$W/new/grub.cfg")"
+    if [[ -n "$LOGO_FILE" ]]; then
+        printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd python3 "$SCRIPT_DIR/render_theme.py" --logo "$LOGO_FILE" --template "$GRUB_THEME_TEMPLATE" --out "$W/tree/boot/grub/happymining")"
+        printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd python3 "$SCRIPT_DIR/patch_grub.py" grub --in "$W/orig/grub.cfg" --entries "$GRUB_ENTRIES" --look "$GRUB_LOOK" --out "$W/new/grub.cfg")"
+    else
+        printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd python3 "$SCRIPT_DIR/patch_grub.py" grub --in "$W/orig/grub.cfg" --entries "$GRUB_ENTRIES" --out "$W/new/grub.cfg")"
+    fi
     printf 'DRY-RUN would run: %s\n' "$(hm_quote_cmd python3 "$OS_DIR/autoinstall/validate.py" --grub-cfg "$W/new/grub.cfg")"
     cat <<PLAN
  7. Scan the staged tree, and the unpacked contents of the agent package, for secrets:
@@ -372,13 +413,25 @@ stage_payload "$WORK/tree/happymining"
 xorriso -osirrox on -indev "$BASE_ISO" -extract /boot/grub/grub.cfg "$WORK/orig/grub.cfg" >"$WORK/xorriso-extract.log" 2>&1 ||
     hm_die "$HM_EXIT_FAIL" "could not read /boot/grub/grub.cfg from the base ISO (see $WORK/xorriso-extract.log)"
 chmod u+w -- "$WORK/orig/grub.cfg"
-python3 "$SCRIPT_DIR/patch_grub.py" grub --in "$WORK/orig/grub.cfg" --entries "$GRUB_ENTRIES" --out "$WORK/new/grub.cfg" ||
+mkdir -p -- "$WORK/tree/boot/grub"
+patch_args=(--entries "$GRUB_ENTRIES")
+THEME_STAGED=0
+if stage_boot_theme "$WORK/tree/boot/grub/happymining"; then
+    THEME_STAGED=1
+    patch_args+=(--look "$GRUB_LOOK")
+    hm_log "boot menu theme rendered from $LOGO_FILE"
+else
+    hm_warn "no logo (os/image/branding/logo.png or --logo FILE): the boot menu keeps Ubuntu's plain text look"
+fi
+python3 "$SCRIPT_DIR/patch_grub.py" grub --in "$WORK/orig/grub.cfg" "${patch_args[@]}" --out "$WORK/new/grub.cfg" ||
     hm_die "$HM_EXIT_FAIL" "could not add the HappyMining entries to grub.cfg"
 python3 "$OS_DIR/autoinstall/validate.py" --grub-cfg "$WORK/new/grub.cfg" ||
     hm_die "$HM_EXIT_FAIL" "the new grub.cfg failed validation"
 
 map_args=(-map "$WORK/tree/happymining" /happymining -map "$WORK/new/grub.cfg" /boot/grub/grub.cfg)
-mkdir -p -- "$WORK/tree/boot/grub"
+if [[ "$THEME_STAGED" == "1" ]]; then
+    map_args+=(-map "$WORK/tree/boot/grub/happymining" /boot/grub/happymining)
+fi
 cp -- "$WORK/new/grub.cfg" "$WORK/tree/boot/grub/grub.cfg"
 if xorriso -osirrox on -indev "$BASE_ISO" -extract /md5sum.txt "$WORK/orig/md5sum.txt" >>"$WORK/xorriso-extract.log" 2>&1; then
     chmod u+w -- "$WORK/orig/md5sum.txt"
@@ -418,6 +471,14 @@ diff -r -- "$WORK/tree/happymining" "$WORK/readback/happymining" >/dev/null ||
     hm_die "$HM_EXIT_FAIL" "/happymining in the new ISO differs from what was staged"
 diff -- "$WORK/new/grub.cfg" "$WORK/readback/grub.cfg" >/dev/null ||
     hm_die "$HM_EXIT_FAIL" "grub.cfg in the new ISO differs from what was staged"
+if [[ "$THEME_STAGED" == "1" ]]; then
+    xorriso -osirrox on -indev "$OUT.partial" \
+        -extract /boot/grub/happymining "$WORK/readback/boot-theme" >>"$WORK/xorriso-readback.log" 2>&1 ||
+        hm_die "$HM_EXIT_FAIL" "could not read /boot/grub/happymining back from the new ISO"
+    chmod -R u+w -- "$WORK/readback/boot-theme"
+    diff -r -- "$WORK/tree/boot/grub/happymining" "$WORK/readback/boot-theme" >/dev/null ||
+        hm_die "$HM_EXIT_FAIL" "/boot/grub/happymining in the new ISO differs from what was staged"
+fi
 python3 "$SCRIPT_DIR/secret_scan.py" "$WORK/readback" || hm_die "$HM_EXIT_FAIL" "secrets found in the built ISO; refusing"
 python3 "$OS_DIR/autoinstall/validate.py" --grub-cfg "$WORK/readback/grub.cfg" ||
     hm_die "$HM_EXIT_FAIL" "the built ISO's grub.cfg failed validation"
@@ -450,6 +511,11 @@ mv -- "$OUT.partial" "$OUT"
     printf 'agent-package: %s\n' "$AGENT_DEB_FILENAME"
     printf 'agent-package-sha256: %s\n' "$(hm_sha256 "$AGENT_DEB")"
     printf 'payload-signed-by: %s\n' "${HM_SIGNER_FPR:-UNSIGNED-DEVELOPMENT-BUILD}"
+    if [[ "$THEME_STAGED" == "1" ]]; then
+        printf 'boot-menu-logo-sha256: %s\n' "$(hm_sha256 "$LOGO_FILE")"
+    else
+        printf 'boot-menu-logo-sha256: none (plain text menu)\n'
+    fi
     printf 'xorriso: %s\n' "$(xorriso -version 2>/dev/null | head -n 1)"
 } >"$OUT.buildinfo"
 hm_log "built $OUT"

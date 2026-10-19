@@ -247,3 +247,52 @@ def test_build_installer_and_render_seed_also_name_the_missing_pyyaml(build_env,
     assert seed.returncode == 77, seed.stdout + seed.stderr
     assert "python3 module 'yaml' (package python3-yaml)" in seed.stderr
     assert not (tmp_path / "seed").exists()
+
+
+def test_logo_builds_the_boot_menu_theme_into_the_image(build_env, release_key):
+    import sys
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(IMAGE_DIR))
+    import render_theme
+    logo = build_env.tmp / "logo.png"
+    logo.write_bytes(render_theme.solid_png(400, 100, (255, 255, 255)))
+    out = run([*build_env.args, "--logo", logo], env=build_env.environ)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "boot menu theme rendered from" in out.stdout
+    with tarfile.open(build_env.out) as tar:
+        names = set(tar.getnames())
+        grub = tar.extractfile("boot/grub/grub.cfg").read().decode()
+        theme = tar.extractfile("boot/grub/happymining/theme.txt").read().decode()
+        staged_logo = tar.extractfile("boot/grub/happymining/logo.png").read()
+        md5 = tar.extractfile("md5sum.txt").read().decode()
+    assert staged_logo == logo.read_bytes()
+    assert "boot/grub/happymining/select_c.png" in names
+    assert "width = 400\n" in theme and "height = 100\n" in theme
+    assert "set theme=/boot/grub/happymining/theme.txt" in grub
+    assert grub.index("HappyMining OS boot menu look") < grub.index('menuentry "Install HappyMining OS"')
+    for line in grub.splitlines():
+        if line.strip().startswith("linux"):
+            assert "autoinstall" not in line.split()
+    assert hashlib.md5(theme.encode()).hexdigest() + "  ./boot/grub/happymining/theme.txt" in md5
+    assert hashlib.md5(staged_logo).hexdigest() + "  ./boot/grub/happymining/logo.png" in md5
+    info = (build_env.dist / (OUT_NAME + ".buildinfo")).read_text()
+    assert f"boot-menu-logo-sha256: {hashlib.sha256(staged_logo).hexdigest()}" in info
+
+
+def test_without_a_logo_the_menu_stays_plain_and_the_build_says_so(build_env):
+    out = run([*build_env.args, "--no-logo"], env=build_env.environ)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "plain text look" in out.stdout + out.stderr
+    with tarfile.open(build_env.out) as tar:
+        names = set(tar.getnames())
+        grub = tar.extractfile("boot/grub/grub.cfg").read().decode()
+    assert not any(n.startswith("boot/grub/happymining/") for n in names)
+    assert "theme" not in grub
+    info = (build_env.dist / (OUT_NAME + ".buildinfo")).read_text()
+    assert "boot-menu-logo-sha256: none" in info
+
+
+def test_missing_logo_file_is_a_usage_error(build_env):
+    out = run([*build_env.args, "--logo", build_env.tmp / "absent.png"], env=build_env.environ)
+    assert out.returncode == 2 and "logo not found" in out.stderr
+    assert not build_env.out.exists()
