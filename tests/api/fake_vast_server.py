@@ -35,6 +35,9 @@ class FakeVast:
         self.hang_s = 3.0
         self.per_machine_override: dict[int, dict] = {}
         self.ignore_machine_filter = False
+        self.listings: list[dict] = []
+        self.extended_on_list = 0
+        self.reports: dict[int, list[dict]] = {}
         self._stopped = False
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self._server.daemon_threads = True
@@ -144,6 +147,43 @@ class FakeVast:
                 ):
                     machine_id = int(parts.path.split("/")[4])
                     return self._json(200, {"success": True, "machine_id": machine_id, "user_id": 424242})
+                if method == "PUT" and parts.path == "/api/v0/machines/create_asks/":
+                    sent = json.loads(body or b"{}")
+                    fake.listings.append(sent)
+                    return self._json(200, {"success": True, "extended": fake.extended_on_list, "msg": "ok"})
+                if (
+                    method == "PUT"
+                    and parts.path.startswith("/api/v0/machines/")
+                    and parts.path.endswith("/minbid/")
+                ):
+                    sent = json.loads(body or b"{}")
+                    return self._json(200, {"success": True, "you_sent": sent})
+                if (
+                    method == "PUT"
+                    and parts.path.startswith("/api/v0/machines/")
+                    and parts.path.endswith("/cancel_maint/")
+                ):
+                    machine_id = int(parts.path.split("/")[4])
+                    if machine_id not in {m["id"] for m in fake.machines}:
+                        return self._json(
+                            404,
+                            {
+                                "success": False,
+                                "msg": "No such machine id",
+                                "machine_id": machine_id,
+                                "user_id": 424242,
+                            },
+                        )
+                    return self._json(
+                        200, {"success": True, "ctime": 1.0, "machine_id": machine_id, "msg": "ok"}
+                    )
+                if (
+                    method == "GET"
+                    and parts.path.startswith("/api/v0/machines/")
+                    and parts.path.endswith("/reports")
+                ):
+                    machine_id = int(parts.path.split("/")[4])
+                    return self._json(200, fake.reports.get(machine_id, []))
                 return self._json(404, {"success": False, "error": "not_found"})
 
             def do_GET(self):

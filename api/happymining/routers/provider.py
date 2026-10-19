@@ -9,14 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..db import get_db, lock_row
+from ..db import get_db
 from ..deps import client_ip, require_admin, require_admin_or_auditor, settings_dep
-from ..errors import AppError, FeatureDisabled, NotFound, UpstreamUnavailable
+from ..errors import FeatureDisabled, NotFound, UpstreamUnavailable
 from ..models import ProviderAccount, ProviderMachine, SyncRun
-from ..providers.base import ProviderError, ProviderFeatureDisabled, ProviderOutcomeUncertain
 from ..providers.registry import get_provider
-from ..schemas import BindIn, ImportEarningsIn
-from ..services import provider_sync
+from ..schemas import BindIn, ImportEarningsIn, ListingIn, MinBidIn
+from ..services import provider_control, provider_sync
 from ..services.accounts import Principal
 from . import views
 
@@ -162,54 +161,98 @@ def unlist(
     settings: Settings = Depends(settings_dep),
 ):
     """Stop new rentals through the provider's own control. Existing rentals are untouched."""
-    from ..audit import audit  # local import keeps the module header small
-
-    pm = lock_row(db, ProviderMachine, provider_machine_id)
-    if pm is None:
-        raise NotFound()
-    provider = get_provider(settings)
-    actor = principal.actor(client_ip(request))
-    try:
-        result = provider.unlist_machine(pm.external_id)
-    except ProviderFeatureDisabled as exc:
-        raise FeatureDisabled(exc.message, code=exc.code) from exc
-    except ProviderOutcomeUncertain as exc:
-        audit(
-            db,
-            actor,
-            "provider_machine.unlist_uncertain",
-            object_type="provider_machine",
-            object_id=pm.id,
-            details={"external_id": pm.external_id},
-        )
-        pm.listed = None
-        pm.state_detail = "unlist was requested and its outcome is unknown"
-        db.commit()
-        raise AppError(exc.message, code=exc.code) from exc
-    except ProviderError as exc:
-        raise UpstreamUnavailable(exc.message, code=exc.code) from exc
-    # Do not assume: read the state back and record what the provider says now.
-    try:
-        state = provider.get_rental_state(pm.external_id)
-        pm.rental_state, pm.listed = state.state, state.listed
-        pm.state_detail, pm.state_observed_at = state.detail[:500], state.observed_at
-    except ProviderError:
-        pm.listed = None
-    audit(
-        db,
-        actor,
-        "provider_machine.unlist",
-        object_type="provider_machine",
-        object_id=pm.id,
-        details={"external_id": pm.external_id, "verified_unlisted": pm.listed is False},
+    pm, detail = provider_control.unlist_machine(
+        db, principal.actor(client_ip(request)), get_provider(settings), provider_machine_id
     )
     db.commit()
     return {
         **views.provider_machine_view(pm),
-        "provider_result": result.detail,
+        "provider_result": detail,
         "verified_unlisted": pm.listed is False,
         "note": "Unlisting stops new rentals only. It is not permission to interrupt existing rentals.",
     }
+
+
+@router.get("/machines/{provider_machine_id}")
+def provider_machine(
+    provider_machine_id: uuid.UUID,
+    _: Principal = Depends(require_admin_or_auditor),
+    db: Session = Depends(get_db),
+):
+    pm = db.get(ProviderMachine, provider_machine_id)
+    if pm is None:
+        raise NotFound()
+    return views.provider_machine_view(pm)
+
+
+@router.get("/machines/{provider_machine_id}/reports")
+def provider_machine_reports(
+    provider_machine_id: uuid.UUID,
+    _: Principal = Depends(require_admin_or_auditor),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """What renters reported about the machine, straight from the provider (read-only)."""
+    reports = provider_control.reports(db, get_provider(settings), provider_machine_id)
+    return {
+        "items": [{"problem": r.problem, "message": r.message, "created_at": r.created_at} for r in reports],
+        "count": len(reports),
+    }
+
+
+@router.post("/machines/{provider_machine_id}/list")
+def list_machine(
+    provider_machine_id: uuid.UUID,
+    body: ListingIn,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """Create or replace the machine's offer (prices and end date). Running
+    contracts keep their terms; a later end date may extend them."""
+    pm, detail = provider_control.list_machine(
+        db, principal.actor(client_ip(request)), get_provider(settings), provider_machine_id, body
+    )
+    db.commit()
+    return {
+        **views.provider_machine_view(pm),
+        "provider_result": detail,
+        "note": "The provider exposes no listed flag; the next machine sync refreshes the prices shown.",
+    }
+
+
+@router.post("/machines/{provider_machine_id}/min-bid")
+def set_min_bid(
+    provider_machine_id: uuid.UUID,
+    body: MinBidIn,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """Floor price for interruptible rentals, $/GPU/hour. New rentals only."""
+    pm, detail = provider_control.set_min_bid(
+        db, principal.actor(client_ip(request)), get_provider(settings), provider_machine_id, body.price
+    )
+    db.commit()
+    return {**views.provider_machine_view(pm), "provider_result": detail}
+
+
+@router.post("/machines/{provider_machine_id}/cancel-maintenance")
+def cancel_maintenance(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(require_admin),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    """Cancel an upcoming or ongoing maintenance window this account scheduled."""
+    pm, detail = provider_control.cancel_maintenance(
+        db, principal.actor(client_ip(request)), get_provider(settings), provider_machine_id
+    )
+    db.commit()
+    return {**views.provider_machine_view(pm), "provider_result": detail}
 
 
 @router.post("/import-earnings")

@@ -22,7 +22,9 @@ from . import vast_wire
 from .base import (
     EarningsReport,
     EarningsRow,
+    ListingTerms,
     MachineList,
+    MachineReport,
     MutationResult,
     ProviderError,
     ProviderFeatureDisabled,
@@ -59,6 +61,8 @@ class FakeProvider:
         self.outage = False  # tests flip this to simulate a provider outage
         self.declared_total_override: dict[str, Decimal] = {}
         self.calls: list[str] = []
+        self.listings: list[tuple[str, ListingTerms]] = []
+        self.cancelled_maintenance: list[str] = []
 
     @classmethod
     def from_fixture(cls, path: Path | None = None, *, today: date | None = None, **kw: Any) -> FakeProvider:
@@ -202,12 +206,61 @@ class FakeProvider:
             is_synthetic=True,
         )
 
-    def unlist_machine(self, external_machine_id: str) -> MutationResult:
-        self._check("unlist_machine")
+    def _mutation(self, call: str, external_machine_id: str) -> dict[str, Any]:
+        self._check(call)
         if not self.mutations_enabled:
             raise ProviderFeatureDisabled(
                 "provider mutations are disabled (HM_PROVIDER_MUTATIONS_ENABLED=false)"
             )
-        machine = self._machine(external_machine_id)
+        return self._machine(external_machine_id)
+
+    def unlist_machine(self, external_machine_id: str) -> MutationResult:
+        machine = self._mutation("unlist_machine", external_machine_id)
         machine.setdefault("rental", dict(IDLE))["listed"] = False
         return MutationResult(ok=True, detail="SYNTHETIC unlist; no real machine was touched")
+
+    def list_machine(self, external_machine_id: str, terms: ListingTerms) -> MutationResult:
+        machine = self._mutation("list_machine", external_machine_id)
+        if terms.price_gpu <= 0:
+            raise ProviderError("price_gpu must be positive")
+        if terms.end_date <= datetime.now(UTC):
+            raise ProviderError("end_date must be in the future")
+        # The synthetic fleet reflects the offer the way the real inventory would.
+        machine["listed_gpu_cost"] = float(terms.price_gpu)
+        if terms.price_min_bid is not None:
+            machine["min_bid_price"] = float(terms.price_min_bid)
+        if terms.price_inet_up is not None:
+            machine["listed_inet_up_cost"] = float(terms.price_inet_up)
+        if terms.price_inet_down is not None:
+            machine["listed_inet_down_cost"] = float(terms.price_inet_down)
+        machine.setdefault("rental", dict(IDLE))["listed"] = True
+        self.listings.append((external_machine_id, terms))
+        return MutationResult(
+            ok=True,
+            detail="SYNTHETIC listing; no real machine was touched",
+            raw={"success": True, "extended": 0},
+        )
+
+    def set_min_bid(self, external_machine_id: str, price: Decimal) -> MutationResult:
+        machine = self._mutation("set_min_bid", external_machine_id)
+        if price < 0:
+            raise ProviderError("price must not be negative")
+        machine["min_bid_price"] = float(price)
+        return MutationResult(ok=True, detail="SYNTHETIC minimum bid; no real machine was touched")
+
+    def cancel_maintenance(self, external_machine_id: str) -> MutationResult:
+        self._mutation("cancel_maintenance", external_machine_id)
+        self.cancelled_maintenance.append(external_machine_id)
+        return MutationResult(ok=True, detail="SYNTHETIC maintenance cancel; no real machine was touched")
+
+    def get_reports(self, external_machine_id: str) -> list[MachineReport]:
+        self._check("get_reports")
+        machine = self._machine(external_machine_id)
+        return [
+            MachineReport(
+                problem=str(r.get("problem", "")),
+                message=str(r.get("message", "")),
+                created_at=str(r.get("created_at", "")),
+            )
+            for r in machine.get("reports", [])
+        ]

@@ -8,7 +8,7 @@ session's CSRF token and is refused when it is missing or wrong.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -56,6 +56,7 @@ from .services import (
     fees,
     pairing,
     payouts,
+    provider_control,
     provider_sync,
     receipts,
     remote_access,
@@ -522,6 +523,7 @@ def provider_page(
         machine_labels={str(m.id): m.label for m in db.execute(select(Machine)).scalars()},
         unbound=unbound,
         today=datetime.now(UTC).date(),
+        default_end=(datetime.now(UTC) + timedelta(days=90)).date(),
         start=end - timedelta(days=6),
         end=end,
     )
@@ -609,6 +611,156 @@ def provider_bind(
 
 
 # --- admin: exceptions, fees ----------------------------------------------
+
+
+def _provider_machine_action(
+    db: Session, principal: Principal, request: Request, settings: Settings, fn, ok: str
+):
+    """A provider write from a form: FeatureDisabled and uncertain outcomes are
+    shown as errors on the page, never as success."""
+    return action(
+        db, "/admin/provider", lambda: fn(get_provider(settings), principal.actor(client_ip(request))), ok
+    )
+
+
+@router.post("/admin/provider-machines/{provider_machine_id}/list")
+def provider_list(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    price_gpu: str = Form(...),
+    end_date: date = Form(...),
+    price_min_bid: str = Form(""),
+    price_disk: str = Form(""),
+    price_inet_up: str = Form(""),
+    price_inet_down: str = Form(""),
+    min_chunk: str = Form(""),
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    from pydantic import ValidationError
+
+    from .schemas import ListingIn
+
+    try:
+        body = ListingIn(
+            price_gpu=price_gpu.strip(),
+            # The form takes a day; the offer expires at the end of that UTC day.
+            end_date=datetime.combine(end_date, time(23, 59, 59), tzinfo=UTC),
+            price_min_bid=price_min_bid.strip() or None,
+            price_disk=price_disk.strip() or None,
+            price_inet_up=price_inet_up.strip() or None,
+            price_inet_down=price_inet_down.strip() or None,
+            min_chunk=int(min_chunk) if min_chunk.strip() else None,
+        )
+    except (ValidationError, ValueError) as exc:
+        return back("/admin/provider", err=f"offer terms: {str(exc).splitlines()[0]}"[:300])
+    return _provider_machine_action(
+        db,
+        principal,
+        request,
+        settings,
+        lambda provider, actor: provider_control.list_machine(db, actor, provider, provider_machine_id, body),
+        lambda result: (
+            f"Offer sent to the provider: {result[1]}. The next machine sync shows the prices it reports."
+        ),
+    )
+
+
+@router.post("/admin/provider-machines/{provider_machine_id}/min-bid")
+def provider_min_bid(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    price: str = Form(...),
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    from pydantic import ValidationError
+
+    from .schemas import MinBidIn
+
+    try:
+        body = MinBidIn(price=price.strip())
+    except ValidationError:
+        return back("/admin/provider", err="floor price: a number such as 0.12 ($/GPU/hour)")
+    return _provider_machine_action(
+        db,
+        principal,
+        request,
+        settings,
+        lambda provider, actor: provider_control.set_min_bid(
+            db, actor, provider, provider_machine_id, body.price
+        ),
+        lambda result: f"Floor price sent to the provider: {result[1]}.",
+    )
+
+
+@router.post("/admin/provider-machines/{provider_machine_id}/unlist")
+def provider_unlist(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    return _provider_machine_action(
+        db,
+        principal,
+        request,
+        settings,
+        lambda provider, actor: provider_control.unlist_machine(db, actor, provider, provider_machine_id),
+        lambda result: f"Unlisted: {result[1]}. Existing rentals continue until their end date.",
+    )
+
+
+@router.post("/admin/provider-machines/{provider_machine_id}/cancel-maintenance")
+def provider_cancel_maintenance(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    csrf_token: str = Form(""),
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin")
+    check_csrf(request, principal, settings, csrf_token)
+    return _provider_machine_action(
+        db,
+        principal,
+        request,
+        settings,
+        lambda provider, actor: provider_control.cancel_maintenance(db, actor, provider, provider_machine_id),
+        lambda result: f"Maintenance window: {result[1]}.",
+    )
+
+
+@router.get("/admin/provider-machines/{provider_machine_id}/reports", response_class=HTMLResponse)
+def provider_reports_page(
+    provider_machine_id: uuid.UUID,
+    request: Request,
+    principal: Principal = Depends(page_principal),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+):
+    need(principal, "admin", "auditor")
+    pm = db.get(ProviderMachine, provider_machine_id)
+    if pm is None:
+        raise NotFound()
+    try:
+        reports = provider_control.reports(db, get_provider(settings), provider_machine_id)
+    except AppError as exc:
+        return back("/admin/provider", err=exc.message)
+    return render(request, settings, principal, "admin_provider_reports.html", pm=pm, reports=reports)
 
 
 @router.get("/admin/exceptions", response_class=HTMLResponse)

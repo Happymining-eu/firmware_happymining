@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Reports · #{{ pm.external_id }} · HappyMining OS{% endblock %}
+{% block content %}
+<h1>Renter reports for provider machine #{{ pm.external_id }}</h1>
+<p class="note">{{ pm.hostname }} · {{ pm.num_gpus or "?" }} × {{ pm.gpu_name or "unknown" }} · read from the provider just now.
+  <a href="/admin/provider">Back to the fleet</a></p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Problem</th><th>Message</th></tr></thead>
+    <tbody>
+    {% for r in reports %}
+      <tr><td class="mono">{{ r.created_at }}</td><td>{{ r.problem }}</td><td>{{ r.message }}</td></tr>
+    {% else %}
+      <tr><td colspan="3" class="note">No reports from renters.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -166,6 +166,59 @@ class MutationResult:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ListingTerms:
+    """What an operator asks the provider to offer a machine at.
+
+    Units follow the Vast CLI help (docs/integration-evidence.md, D13):
+    ``price_gpu`` and ``price_min_bid`` in $/GPU/hour, ``price_disk`` in
+    $/GB/month, ``price_inet_up`` and ``price_inet_down`` in $/GB, ``min_chunk``
+    the smallest number of GPUs one rental may take, ``end_date`` when the offer
+    expires (required: "set an offer end date before listing your machine, or
+    the offer will remain open indefinitely"). Listing again with a later end
+    date can extend existing contracts at their current price; a raised price
+    never changes a running contract (D14).
+    """
+
+    price_gpu: Decimal
+    end_date: datetime
+    price_disk: Decimal | None = None
+    price_inet_up: Decimal | None = None
+    price_inet_down: Decimal | None = None
+    price_min_bid: Decimal | None = None
+    min_chunk: int | None = None
+
+
+@dataclass(frozen=True)
+class ListingSnapshot:
+    """The offer-related fields the provider reports for a machine, as last
+    synced. Every field is optional: the provider documents none of them, the
+    official CLI merely prints them (docs/integration-evidence.md, B5)."""
+
+    gpu_price: Decimal | None = None  # $/GPU/h, "listed_gpu_cost"
+    min_bid_price: Decimal | None = None  # $/GPU/h, "min_bid_price"
+    inet_up_price: Decimal | None = None  # $/GB, "listed_inet_up_cost"
+    inet_down_price: Decimal | None = None  # $/GB, "listed_inet_down_cost"
+    credit_discount_max: Decimal | None = None
+    reliability: Decimal | None = None  # "reliability2", 0 to 1 presumed
+    verification: str = ""
+    num_reports: int | None = None
+    gpu_occupancy: str = ""  # format undocumented; shown verbatim
+    driver_version: str = ""
+    disk_space: Decimal | None = None  # unit undocumented
+    public_ip: str = ""
+    geolocation: str = ""
+
+
+@dataclass(frozen=True)
+class MachineReport:
+    """One renter report about a machine (``GET /machines/{id}/reports``)."""
+
+    problem: str
+    message: str
+    created_at: str
+
+
 class Provider(Protocol):
     name: str
     is_synthetic: bool
@@ -179,3 +232,11 @@ class Provider(Protocol):
     def fetch_earnings(self, external_machine_ids: list[str], start: date, end: date) -> EarningsReport: ...
 
     def unlist_machine(self, external_machine_id: str) -> MutationResult: ...
+
+    def list_machine(self, external_machine_id: str, terms: ListingTerms) -> MutationResult: ...
+
+    def set_min_bid(self, external_machine_id: str, price: Decimal) -> MutationResult: ...
+
+    def cancel_maintenance(self, external_machine_id: str) -> MutationResult: ...
+
+    def get_reports(self, external_machine_id: str) -> list[MachineReport]: ...

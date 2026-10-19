@@ -2115,6 +2115,10 @@ def every_form_field(today: str) -> dict[str, str]:
         "bic": "",
         "idempotency_key": "csrf-walk-key-0001",
         "op_type": "refresh_inventory",
+        # Fleet controls on the provider page.
+        "price_gpu": "0.30",
+        "price": "0.10",
+        "end_date": today,
     }
 
 

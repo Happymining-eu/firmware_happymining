@@ -128,6 +128,32 @@ class ImportEarningsIn(Strict):
     end: date
 
 
+PriceStr = Annotated[str, StringConstraints(pattern=r"^\d{1,6}(\.\d{1,8})?$")]
+
+
+class ListingIn(Strict):
+    """Offer terms sent to the provider (units: docs/integration-evidence.md, D13).
+
+    ``price_gpu`` $/GPU/hour; ``price_disk`` $/GB/month; ``price_inet_up`` and
+    ``price_inet_down`` $/GB; ``price_min_bid`` $/GPU/hour floor for
+    interruptible rentals; ``min_chunk`` smallest number of GPUs per rental;
+    ``end_date`` when the offer expires (required: an offer without one stays
+    open indefinitely).
+    """
+
+    price_gpu: PriceStr
+    end_date: datetime
+    price_disk: PriceStr | None = None
+    price_inet_up: PriceStr | None = None
+    price_inet_down: PriceStr | None = None
+    price_min_bid: PriceStr | None = None
+    min_chunk: Annotated[int, Field(ge=1, le=64)] | None = None
+
+
+class MinBidIn(Strict):
+    price: PriceStr
+
+
 class FeeScheduleIn(Strict):
     owner_id: uuid.UUID | None = None
     rate: Annotated[str, StringConstraints(pattern=r"^0(\.\d{1,8})?$")]

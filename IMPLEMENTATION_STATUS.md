@@ -17,9 +17,9 @@ final code**.
 | Area | State | Notes |
 |---|---|---|
 | Vast integration evidence | Done | `docs/integration-evidence.md`: primary sources, each claim marked confirmed or unresolved. 24 points unresolved. |
-| API, schema, migrations | Done, tested (up to `0002`) | FastAPI, PostgreSQL 16, database-enforced ledger rules. Migration `0003_appliance` checked before the test database was lost (see below). |
+| API, schema, migrations | Done, tested (`0003` included; the suite ran on 2026-10-19: 1121 passed) | FastAPI, PostgreSQL 16, database-enforced ledger rules. Migration `0003_appliance` checked before the test database was lost (see below). |
 | Ledger and settlements | Done, tested, reviewed once | Double entry, immutable, idempotent, evidence-based. Independent review findings fixed with regression tests. |
-| Vast adapter | Written, **never run against Vast** | Tested against a fake server built from the documentation. Read-only by default. |
+| Vast adapter | Written, **never run against Vast** | Tested against a fake server built from the documentation. Read-only by default. 2026-10-19: listing with prices and end date, minimum bid, cancel maintenance and renter reports added from the confirmed endpoints (D13); exposed to admins on `/admin/provider` and `/api/v1/provider/machines/{id}/...` with audit. |
 | Rental protection gate | Done, tested | In LIVE it always blocks disruptive actions, because Vast does not expose rental state. Intended. Leaving `vast` mode now passes it too (`leave_vast_mode`); its tests need the database and have not run against the final code. |
 | Go agent, CLI, helper, simulator, `.deb` | Built, tested | Real binaries ran against the real API in tests at `c1c9c6d`. Not run on a GPU machine, not under systemd, `.deb` not installed with `dpkg -i`. |
 | Installer and image tooling | Scripts and seeds tested; **ISO not built, smoke test not run** | No `xorriso`, no base ISO, no QEMU in the build environment. No appliance installer profile yet. |

@@ -138,7 +138,14 @@ def provider_machine_view(pm: ProviderMachine) -> dict[str, Any]:
         "state_observed_at": iso(pm.state_observed_at),
         "last_seen_at": iso(pm.last_seen_at),
         "missing_since": iso(pm.missing_since),
+        "listing": _listing_view(pm),
     }
+
+
+def _listing_view(pm: ProviderMachine) -> dict[str, Any] | None:
+    from ..services.provider_control import listing_view  # avoids an import cycle
+
+    return listing_view(pm)
 
 
 def bucket_view(bucket: EarningBucket) -> dict[str, Any]:

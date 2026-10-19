@@ -50,18 +50,45 @@
 </div>
 {% endif %}
 
-<h2>Provider machines</h2>
+<h2>Fleet on the provider</h2>
+<p class="note">
+  Prices and the offer end date are what new rentals are offered at. A running contract keeps its own
+  price and end date whatever is changed here; a later end date can extend it. Unlisting stops new rentals
+  only. Nothing on this page stops, reboots or touches a renter's instance.
+</p>
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Provider id</th><th>Hostname</th><th>GPUs</th><th>Rental state</th><th>Listed</th><th>Bound to</th></tr></thead>
+    <thead><tr>
+      <th>Provider id</th><th>Hostname</th><th>GPUs</th><th>Offer</th><th>Reports</th>
+      <th>Rental state</th><th>Bound to</th>{% if role == "admin" %}<th>Actions</th>{% endif %}
+    </tr></thead>
     <tbody>
     {% for pm in provider_machines %}
+      {% set l = pm.listing %}
       <tr>
-        <td class="mono">#{{ pm.external_id }}</td>
-        <td>{{ pm.hostname }}</td>
-        <td>{{ pm.num_gpus or "?" }} × {{ pm.gpu_name or "unknown" }}</td>
-        <td>{{ m.status(pm.rental_state) }}{% if pm.missing_since %} <span class="pill bad">missing</span>{% endif %}</td>
-        <td>{% if pm.listed is none %}unknown{% else %}{{ "yes" if pm.listed else "no" }}{% endif %}</td>
+        <td class="mono">#{{ pm.external_id }}
+          {% if l and l.verification %}<br><span class="pill {{ 'good' if l.verification == 'verified' else 'stale' }}">{{ l.verification }}</span>{% endif %}
+        </td>
+        <td>{{ pm.hostname }}{% if l and l.geolocation %}<br><span class="note">{{ l.geolocation }}</span>{% endif %}</td>
+        <td>{{ pm.num_gpus or "?" }} × {{ pm.gpu_name or "unknown" }}
+          {% if l and l.driver_version %}<br><span class="note">driver {{ l.driver_version }}</span>{% endif %}
+        </td>
+        <td>
+          {% if l and l.gpu_price %}<strong>{{ l.gpu_price }}</strong> $/GPU/h
+            {% if l.min_bid_price %}<br><span class="note">floor {{ l.min_bid_price }} $/GPU/h</span>{% endif %}
+            {% if l.reliability %}<br><span class="note">reliability {{ l.reliability }}</span>{% endif %}
+          {% else %}<span class="note">no offer in the last sync</span>{% endif %}
+          <br>listed: {% if pm.listed is none %}<span class="note">unknown</span>{% else %}{{ "yes" if pm.listed else "no" }}{% endif %}
+          {% if pm.state_detail %}<br><span class="note">{{ pm.state_detail }}</span>{% endif %}
+        </td>
+        <td>{% if l and l.num_reports is not none %}
+              {% if l.num_reports %}<span class="pill bad">{{ l.num_reports }}</span>{% else %}0{% endif %}
+            {% else %}—{% endif %}
+            <br><a href="/admin/provider-machines/{{ pm.id }}/reports">details</a>
+        </td>
+        <td>{{ m.status(pm.rental_state) }}{% if pm.missing_since %} <span class="pill bad">missing</span>{% endif %}
+          {% if l and l.gpu_occupancy %}<br><span class="note mono">occupancy {{ l.gpu_occupancy }}</span>{% endif %}
+        </td>
         <td>
           {% if pm.machine_id %}
             <a href="/machines/{{ pm.machine_id }}">{{ machine_labels.get(pm.machine_id, pm.machine_id) }}</a>
@@ -77,12 +104,43 @@
             </form>
           {% else %}<span class="note">not bound</span>{% endif %}
         </td>
+        {% if role == "admin" %}
+        <td>
+          <details class="edit">
+            <summary>Offer</summary>
+            <form class="row" method="post" action="/admin/provider-machines/{{ pm.id }}/list">
+              {{ m.csrf_field(csrf) }}
+              <label>$/GPU/h <input name="price_gpu" inputmode="decimal" size="6" value="{{ l.gpu_price if l and l.gpu_price else '' }}" required></label>
+              <label>Floor $/GPU/h <input name="price_min_bid" inputmode="decimal" size="6" value="{{ l.min_bid_price if l and l.min_bid_price else '' }}"></label>
+              <label>Disk $/GB/mo <input name="price_disk" inputmode="decimal" size="5"></label>
+              <label>Up $/GB <input name="price_inet_up" inputmode="decimal" size="5"></label>
+              <label>Down $/GB <input name="price_inet_down" inputmode="decimal" size="5"></label>
+              <label>Min GPUs <input name="min_chunk" type="number" min="1" max="64" size="2"></label>
+              <label>Offer until <input type="date" name="end_date" value="{{ default_end }}" required></label>
+              <button type="submit">List at these prices</button>
+            </form>
+            <form class="inline" method="post" action="/admin/provider-machines/{{ pm.id }}/min-bid">
+              {{ m.csrf_field(csrf) }}
+              <label>Floor only $/GPU/h <input name="price" inputmode="decimal" size="6" required></label>
+              <button class="secondary" type="submit">Set floor</button>
+            </form>
+            <form class="inline" method="post" action="/admin/provider-machines/{{ pm.id }}/unlist">
+              {{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Unlist (no new rentals)</button>
+            </form>
+            <form class="inline" method="post" action="/admin/provider-machines/{{ pm.id }}/cancel-maintenance">
+              {{ m.csrf_field(csrf) }}<button class="secondary" type="submit">Cancel maintenance window</button>
+            </form>
+          </details>
+        </td>
+        {% endif %}
       </tr>
     {% else %}
-      <tr><td colspan="6" class="note">No provider machines known. Sync the machine list.</td></tr>
+      <tr><td colspan="{{ 8 if role == 'admin' else 7 }}" class="note">No provider machines known. Sync the machine list.</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
-<p class="note">Binding is an admin decision checked against the provider's own machine list. A device cannot claim a provider machine.</p>
+<p class="note">Binding is an admin decision checked against the provider's own machine list. A device cannot claim a provider machine.
+  Listing and price changes are audited with the terms sent. Scheduling a maintenance window and cleaning up expired
+  storage stay in the provider console on purpose.</p>
 {% endblock %}

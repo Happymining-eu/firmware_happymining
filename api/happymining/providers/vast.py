@@ -12,7 +12,10 @@ explicitly instead of guessing:
   boundaries, are not documented. Reports are returned with the basis from
   configuration (default "unverified"); unverified reports are held, not posted.
 - Maintenance windows: docs and CLI disagree on the ``sdate`` format, so
-  scheduling is not implemented.
+  scheduling is not implemented. Cancelling one is (``cancel_maint``, D13).
+- Listing with prices, the minimum bid and renter reports use the documented
+  calls in D13; the API exposes no "listed" flag, so after a listing call the
+  state is recorded as requested, never as verified.
 
 Writes are never retried. A write whose outcome is unknown raises
 ``ProviderOutcomeUncertain`` and must be reconciled by an operator.
@@ -36,7 +39,9 @@ from . import vast_wire
 from .base import (
     EarningsReport,
     EarningsRow,
+    ListingTerms,
     MachineList,
+    MachineReport,
     MutationResult,
     ProviderAuthError,
     ProviderAuthorizationUnverified,
@@ -232,14 +237,20 @@ class VastProvider:
             is_synthetic=False,
         )
 
+    def get_reports(self, external_machine_id: str) -> list[MachineReport]:
+        """``GET /api/v0/machines/{id}/reports``: what renters reported (docs, CLI)."""
+        if not external_machine_id.isdigit():
+            raise ProviderError(f"Vast machine ids are integers; got {external_machine_id!r}")
+        body = self._get(f"/api/v0/machines/{int(external_machine_id)}/reports")
+        return vast_wire.parse_reports(body)
+
     # --- writes (disabled by default, never retried) ------------------------
 
-    def unlist_machine(self, external_machine_id: str) -> MutationResult:
-        """``DELETE /api/v0/machines/{id}/asks/``. Stops new rentals only.
-
-        Vast documents that unlisting "does not affect existing" contracts. It
-        is not permission to stop or reboot anything.
-        """
+    def _write(
+        self, method: str, path: str, body: dict[str, Any], what: str, external_machine_id: str
+    ) -> dict:
+        """One attempt, never retried. Anything short of a confirmed answer is
+        reported as an uncertain outcome for an operator to check in the console."""
         if not self._settings.provider_mutations_enabled:
             raise ProviderFeatureDisabled(
                 "provider mutations are disabled (HM_PROVIDER_MUTATIONS_ENABLED=false)"
@@ -247,24 +258,84 @@ class VastProvider:
         if not external_machine_id.isdigit():
             raise ProviderError(f"Vast machine ids are integers; got {external_machine_id!r}")
         client = self._ready()
-        path = f"/api/v0/machines/{int(external_machine_id)}/asks/"
         try:
-            response = client.request("DELETE", path, json={})
+            response = client.request(method, path, json=body)
         except httpx.HTTPError as exc:
             raise ProviderOutcomeUncertain(
-                f"unlist request for machine {external_machine_id} was sent and its outcome is unknown "
+                f"{what} request for machine {external_machine_id} was sent and its outcome is unknown "
                 f"({type(exc).__name__}); check the machine in the Vast console before doing anything else"
             ) from exc
         if response.status_code >= 500 or response.status_code == 429:
             raise ProviderOutcomeUncertain(
-                f"unlist request for machine {external_machine_id} got HTTP {response.status_code}; "
+                f"{what} request for machine {external_machine_id} got HTTP {response.status_code}; "
                 "outcome unknown, check the Vast console"
             )
         self._raise_for(response)
         data = vast_wire.loads(response.content)
         if not isinstance(data, dict) or data.get("success") is not True:
-            raise ProviderError("Vast did not confirm the unlist request")
-        return MutationResult(ok=True, detail="unlist accepted by Vast", raw=vast_wire.scrub(data))
+            raise ProviderError(f"Vast did not confirm the {what} request")
+        return vast_wire.scrub(data)
+
+    def unlist_machine(self, external_machine_id: str) -> MutationResult:
+        """``DELETE /api/v0/machines/{id}/asks/``. Stops new rentals only.
+
+        Vast documents that unlisting "does not affect existing" contracts. It
+        is not permission to stop or reboot anything.
+        """
+        data = self._write(
+            "DELETE",
+            f"/api/v0/machines/{int(external_machine_id) if external_machine_id.isdigit() else 0}/asks/",
+            {},
+            "unlist",
+            external_machine_id,
+        )
+        return MutationResult(ok=True, detail="unlist accepted by Vast", raw=data)
+
+    def list_machine(self, external_machine_id: str, terms: ListingTerms) -> MutationResult:
+        """``PUT /api/v0/machines/create_asks/`` (D13). Creates or replaces the offer.
+
+        Existing contracts keep their price and end date whatever is sent here;
+        a later ``end_date`` can extend them (the response field ``extended``
+        counts how many).
+        """
+        if terms.price_gpu <= 0:
+            raise ProviderError("price_gpu must be positive")
+        if terms.end_date <= datetime.now(UTC):
+            raise ProviderError("end_date must be in the future")
+        body = vast_wire.listing_body(int(external_machine_id) if external_machine_id.isdigit() else 0, terms)
+        data = self._write("PUT", "/api/v0/machines/create_asks/", body, "listing", external_machine_id)
+        extended = data.get("extended")
+        detail = "listing accepted by Vast"
+        if isinstance(extended, int) and not isinstance(extended, bool) and extended > 0:
+            detail += f"; {extended} existing contract(s) extended to the new end date"
+        return MutationResult(ok=True, detail=detail, raw=data)
+
+    def set_min_bid(self, external_machine_id: str, price: Decimal) -> MutationResult:
+        """``PUT /api/v0/machines/{id}/minbid/`` with ``client_id: "me"`` and ``price`` ($/GPU/h)."""
+        if price < 0:
+            raise ProviderError("price must not be negative")
+        data = self._write(
+            "PUT",
+            f"/api/v0/machines/{int(external_machine_id) if external_machine_id.isdigit() else 0}/minbid/",
+            {"client_id": "me", "price": str(price)},
+            "minimum bid",
+            external_machine_id,
+        )
+        return MutationResult(ok=True, detail="minimum bid accepted by Vast", raw=data)
+
+    def cancel_maintenance(self, external_machine_id: str) -> MutationResult:
+        """``PUT /api/v0/machines/{id}/cancel_maint/`` (D13). Cancels an upcoming or
+        ongoing window that this account scheduled; completed windows and windows
+        Vast scheduled cannot be cancelled (D14)."""
+        machine_id = int(external_machine_id) if external_machine_id.isdigit() else 0
+        data = self._write(
+            "PUT",
+            f"/api/v0/machines/{machine_id}/cancel_maint/",
+            {"client_id": "me", "machine_id": machine_id},
+            "cancel maintenance",
+            external_machine_id,
+        )
+        return MutationResult(ok=True, detail="maintenance window cancelled", raw=data)
 
     def schedule_maintenance(self, *_: Any, **__: Any) -> MutationResult:
         raise ProviderFeatureUnverified(

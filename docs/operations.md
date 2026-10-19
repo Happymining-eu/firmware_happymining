@@ -121,10 +121,34 @@ scripts/restore-verify.sh --dump /backups/<file>.dump --host HOST --user happymi
 | Variable | Turns on | Before turning it on |
 |---|---|---|
 | `HM_PAYOUTS_ENABLED` | Settlement batches | Backups rehearsed, two admins with MFA, the earnings semantics verified. |
-| `HM_PROVIDER_MUTATIONS_ENABLED` | Unlisting a machine at Vast | A key with `machine_write`. Unlisting does not end running rentals and is not permission to. |
+| `HM_PROVIDER_MUTATIONS_ENABLED` | The fleet controls at Vast: listing with prices and an end date, the interruptible floor price, unlisting, cancelling a maintenance window | A key scoped to `machine_read`, `machine_write` and `billing_read` only (never `billing_write`, never `user_write`). None of these ends a running rental: a contract keeps its price and end date (evidence D14); unlisting stops new rentals only. Every call is audited with the terms sent; an unknown outcome marks the machine for a manual check in the console. |
 | `HM_DISRUPTIVE_OPERATIONS_ENABLED` | Restart of the Vast daemon, reboot | Nothing changes in LIVE today: the rental check cannot be answered from Vast's documented API, so the gate blocks these anyway. The machine's local administrator must also enable them. |
 | `HM_VAST_EARNINGS_BASIS=net_of_provider_fee` and `HM_VAST_EARNINGS_BUCKETS_VERIFIED=true` | Posting LIVE earnings to the ledger | Both points verified against real data (`docs/integration-evidence.md`, C8 and C11). |
 | `HM_RELEASE_PUBLIC_KEYS` | Publishing firmware releases (comma-separated base64 Ed25519 public keys) | The signing key exists, offline, with its custody decided (below). LIVE refuses the published test key. |
+
+## Fleet controls on the provider
+
+Admin page `/admin/provider` ("Fleet on the provider") and the API under
+`/api/v1/provider/machines/{id}`: `GET` (with the `listing` fields of the last
+sync: price, floor, reliability, verification, reports count, occupancy),
+`GET .../reports` (what renters reported), `POST .../list` (offer terms:
+`price_gpu` $/GPU/h, optional `price_min_bid`, `price_disk` $/GB/month,
+`price_inet_up`/`price_inet_down` $/GB, `min_chunk`, and a required
+`end_date` within a year), `POST .../min-bid`, `POST .../unlist`,
+`POST .../cancel-maintenance`. Administrators only; auditors read; the
+integration API has none of them.
+
+What the page says and why:
+
+- Vast exposes no "listed" flag and no listing expiry in its machine list
+  (evidence B5), so after a listing call the state is recorded as *requested*,
+  not verified. Sync the machine list to see the prices Vast now reports.
+- A listing with a later end date can extend running contracts at their
+  current price (`extended` in Vast's answer is shown); a raised price never
+  changes a running contract.
+- Scheduling a maintenance window is not offered: Vast's documentation and
+  its CLI disagree on the start-time format (D13). Cleanup of expired renter
+  storage and `force_delete` are deliberately left to the console.
 
 ## Appliance
 

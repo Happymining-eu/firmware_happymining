@@ -14,7 +14,14 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from .base import EarningsRow, ProviderMachineInfo, ProviderMalformedResponse
+from .base import (
+    EarningsRow,
+    ListingSnapshot,
+    ListingTerms,
+    MachineReport,
+    ProviderMachineInfo,
+    ProviderMalformedResponse,
+)
 
 EPOCH = date(1970, 1, 1)
 # Confirmed field names (integration-evidence.md, C9).
@@ -196,3 +203,100 @@ def parse_earnings(
     elif per_machine is not None:
         raise ProviderMalformedResponse("'per_machine' is not a list")
     return rows, declared, anomalies
+
+
+def _optional_money(item: dict[str, Any], key: str) -> Decimal | None:
+    """A price field the CLI prints; absent or null is None, text or bool is malformed."""
+    value = item.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ProviderMalformedResponse(f"machine field {key} is not a number")
+    return _money(value, key)
+
+
+def _optional_text(item: dict[str, Any], key: str, limit: int = 200) -> str:
+    value = item.get(key)
+    if value is None:
+        return ""
+    return str(value)[:limit]
+
+
+def listing_snapshot(item: dict[str, Any]) -> ListingSnapshot:
+    """Offer-related fields of one ``GET /api/v0/machines`` entry.
+
+    Only the names the official CLI prints (integration-evidence.md, B5). The
+    CLI reads each with ``.get(key, None)``, so every one may be absent.
+    """
+    if not isinstance(item, dict):
+        raise ProviderMalformedResponse("machine entry is not an object")
+    num_reports = item.get("num_reports")
+    return ListingSnapshot(
+        gpu_price=_optional_money(item, "listed_gpu_cost"),
+        min_bid_price=_optional_money(item, "min_bid_price"),
+        inet_up_price=_optional_money(item, "listed_inet_up_cost"),
+        inet_down_price=_optional_money(item, "listed_inet_down_cost"),
+        credit_discount_max=_optional_money(item, "credit_discount_max"),
+        reliability=_optional_money(item, "reliability2"),
+        verification=_optional_text(item, "verification", 64),
+        num_reports=num_reports
+        if isinstance(num_reports, int) and not isinstance(num_reports, bool)
+        else None,
+        gpu_occupancy=_optional_text(item, "gpu_occupancy", 200),
+        driver_version=_optional_text(item, "driver_version", 64),
+        disk_space=_optional_money(item, "disk_space"),
+        public_ip=_optional_text(item, "public_ipaddr", 64),
+        geolocation=_optional_text(item, "geolocation", 120),
+    )
+
+
+def snapshot_view(snapshot: ListingSnapshot) -> dict[str, Any]:
+    """JSON-safe form of a ListingSnapshot (Decimals as strings)."""
+    out: dict[str, Any] = {}
+    for key, value in snapshot.__dict__.items():
+        out[key] = str(value) if isinstance(value, Decimal) else value
+    return out
+
+
+def parse_reports(body: bytes) -> list[MachineReport]:
+    """``GET /api/v0/machines/{id}/reports`` -> array of ``{problem, message, created_at}`` (docs)."""
+    data = loads(body)
+    if not isinstance(data, list):
+        raise ProviderMalformedResponse("reports response is not a list")
+    out: list[MachineReport] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ProviderMalformedResponse("report entry is not an object")
+        out.append(
+            MachineReport(
+                problem=_optional_text(item, "problem", 200),
+                message=_optional_text(item, "message", 2000),
+                created_at=_optional_text(item, "created_at", 64),
+            )
+        )
+    return out
+
+
+def listing_body(machine_id: int, terms: ListingTerms) -> dict[str, Any]:
+    """Body of ``PUT /api/v0/machines/create_asks/`` in the CLI's field names (D13).
+
+    Prices are sent as decimal strings so no binary float ever reaches the wire;
+    ``end_date`` as a unix timestamp (CLI: "unix float timestamp").
+    """
+    body: dict[str, Any] = {
+        "machine": machine_id,
+        "price_gpu": str(terms.price_gpu),
+        "end_date": int(terms.end_date.timestamp()),
+    }
+    for field_name, key in (
+        ("price_disk", "price_disk"),
+        ("price_inet_up", "price_inetu"),
+        ("price_inet_down", "price_inetd"),
+        ("price_min_bid", "price_min_bid"),
+    ):
+        value = getattr(terms, field_name)
+        if value is not None:
+            body[key] = str(value)
+    if terms.min_chunk is not None:
+        body["min_chunk"] = terms.min_chunk
+    return body

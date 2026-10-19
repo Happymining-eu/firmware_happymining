@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 from happymining.config import ConfigError
 from happymining.main import create_app
 from happymining.models import (
+    AuditLog,
     EarningBucket,
     ExceptionItem,
     JournalEntry,
@@ -32,6 +33,7 @@ from happymining.models import (
 )
 from happymining.providers import registry, vast_wire
 from happymining.providers.base import (
+    ListingTerms,
     ProviderAuthError,
     ProviderAuthorizationUnverified,
     ProviderError,
@@ -405,6 +407,153 @@ def test_unconfirmed_write_is_an_error(vast):
         provider.unlist_machine("5001")
 
 
+def test_listing_uses_the_documented_call_with_decimal_prices_and_an_end_date(vast):
+    provider, _ = provider_for(vast, provider_mutations_enabled=True)
+    end = datetime.now(UTC) + timedelta(days=30)
+    terms = ListingTerms(
+        price_gpu=Decimal("0.35"),
+        end_date=end,
+        price_disk=Decimal("0.10"),
+        price_inet_up=Decimal("0.002"),
+        price_inet_down=Decimal("0.001"),
+        price_min_bid=Decimal("0.12"),
+        min_chunk=1,
+    )
+    result = provider.list_machine("5001", terms)
+    assert result.ok and "accepted" in result.detail
+    call = vast.calls("PUT")[0]
+    assert call["path"] == "/api/v0/machines/create_asks/"
+    body = json.loads(call["body"])
+    # CLI field names (D13); prices travel as decimal strings, never binary floats.
+    assert body == {
+        "machine": 5001,
+        "price_gpu": "0.35",
+        "end_date": int(end.timestamp()),
+        "price_disk": "0.10",
+        "price_inetu": "0.002",
+        "price_inetd": "0.001",
+        "price_min_bid": "0.12",
+        "min_chunk": 1,
+    }
+    assert b"0.35000000000000003" not in call["body"]
+
+
+def test_listing_reports_extended_contracts_and_refuses_bad_terms(vast):
+    provider, _ = provider_for(vast, provider_mutations_enabled=True)
+    vast.extended_on_list = 2
+    result = provider.list_machine(
+        "5001", ListingTerms(Decimal("0.5"), datetime.now(UTC) + timedelta(days=1))
+    )
+    assert "2 existing contract(s) extended" in result.detail
+    for bad in (
+        ListingTerms(Decimal("0"), datetime.now(UTC) + timedelta(days=1)),
+        ListingTerms(Decimal("0.5"), datetime.now(UTC) - timedelta(seconds=1)),
+    ):
+        with pytest.raises(ProviderError):
+            provider.list_machine("5001", bad)
+    assert len(vast.calls("PUT")) == 1  # the bad terms never reached Vast
+
+
+def test_min_bid_and_cancel_maintenance_use_the_documented_calls(vast):
+    provider, _ = provider_for(vast, provider_mutations_enabled=True)
+    assert provider.set_min_bid("5001", Decimal("0.2")).ok
+    assert provider.cancel_maintenance("5001").ok
+    calls = vast.calls("PUT")
+    assert calls[0]["path"] == "/api/v0/machines/5001/minbid/"
+    assert json.loads(calls[0]["body"]) == {"client_id": "me", "price": "0.2"}
+    assert calls[1]["path"] == "/api/v0/machines/5001/cancel_maint/"
+    assert json.loads(calls[1]["body"]) == {"client_id": "me", "machine_id": 5001}
+    with pytest.raises(ProviderError):
+        provider.set_min_bid("5001", Decimal("-1"))
+    with pytest.raises(ProviderAuthError):  # Vast answers 404 for an unknown machine; treated like A4
+        provider.cancel_maintenance("9999")
+
+
+@pytest.mark.parametrize("call", ["list_machine", "set_min_bid", "cancel_maintenance"])
+def test_every_write_is_disabled_by_default_and_never_retried(vast, call):
+    import httpx
+
+    def invoke(provider):
+        if call == "list_machine":
+            return provider.list_machine(
+                "5001", ListingTerms(Decimal("0.5"), datetime.now(UTC) + timedelta(days=1))
+            )
+        if call == "set_min_bid":
+            return provider.set_min_bid("5001", Decimal("0.1"))
+        return provider.cancel_maintenance("5001")
+
+    provider, _ = provider_for(vast)
+    with pytest.raises(ProviderFeatureDisabled):
+        invoke(provider)
+    assert vast.calls("PUT") == []
+
+    path = {
+        "list_machine": "/api/v0/machines/create_asks/",
+        "set_min_bid": "/api/v0/machines/5001/minbid/",
+        "cancel_maintenance": "/api/v0/machines/5001/cancel_maint/",
+    }[call]
+    vast.hang_s = 1.0
+    vast.fault(path, "timeout", 503, 503)
+    provider, sleeps = provider_for(vast, provider_mutations_enabled=True)
+    provider._ready()
+    provider._client.timeout = httpx.Timeout(0.3)
+    with pytest.raises(ProviderOutcomeUncertain, match="outcome"):
+        invoke(provider)
+    assert len(vast.calls("PUT")) == 1 and sleeps == []
+
+
+def test_reports_are_read_with_the_documented_call(vast):
+    vast.reports[5001] = [
+        {"problem": "gpu", "message": "CUDA error on gpu 1", "created_at": "2026-10-18T10:00:00Z"},
+        {"problem": "network", "message": "slow download", "created_at": "2026-10-19T08:30:00Z"},
+    ]
+    provider, _ = provider_for(vast)
+    reports = provider.get_reports("5001")
+    assert [(r.problem, r.message, r.created_at) for r in reports] == [
+        ("gpu", "CUDA error on gpu 1", "2026-10-18T10:00:00Z"),
+        ("network", "slow download", "2026-10-19T08:30:00Z"),
+    ]
+    assert provider.get_reports("5002") == []
+    assert vast.calls("GET")[0]["path"] == "/api/v0/machines/5001/reports"
+    with pytest.raises(ProviderMalformedResponse):
+        vast_wire.parse_reports(b'{"not": "a list"}')
+
+
+def test_listing_snapshot_reads_only_the_fields_the_cli_prints():
+    snap = vast_wire.listing_snapshot(
+        {
+            "id": 5001,
+            "listed_gpu_cost": 0.4,
+            "min_bid_price": 0.1,
+            "listed_inet_up_cost": 0.002,
+            "listed_inet_down_cost": 0.001,
+            "credit_discount_max": 0.4,
+            "reliability2": 0.9912,
+            "verification": "verified",
+            "num_reports": 2,
+            "gpu_occupancy": "D D",
+            "driver_version": "550.90",
+            "disk_space": 1800.5,
+            "public_ipaddr": "203.0.113.9",
+            "geolocation": "FR",
+            "something_undocumented": {"x": 1},
+        }
+    )
+    assert snap.gpu_price == Decimal("0.4") and snap.min_bid_price == Decimal("0.1")
+    assert snap.inet_up_price == Decimal("0.002") and snap.reliability == Decimal("0.9912")
+    assert snap.verification == "verified" and snap.num_reports == 2 and snap.gpu_occupancy == "D D"
+    assert snap.public_ip == "203.0.113.9" and snap.geolocation == "FR" and snap.driver_version == "550.90"
+    view = vast_wire.snapshot_view(snap)
+    assert view["gpu_price"] == "0.4" and view["num_reports"] == 2 and "something_undocumented" not in view
+    # Absent fields are None/empty, never guessed; a non-numeric price is malformed.
+    empty = vast_wire.listing_snapshot({"id": 1})
+    assert empty.gpu_price is None and empty.verification == "" and empty.num_reports is None
+    with pytest.raises(ProviderMalformedResponse):
+        vast_wire.listing_snapshot({"id": 1, "listed_gpu_cost": "free"})
+    with pytest.raises(ProviderMalformedResponse):
+        vast_wire.listing_snapshot({"id": 1, "min_bid_price": True})
+
+
 def test_maintenance_window_scheduling_is_not_implemented(vast):
     provider, _ = provider_for(vast, provider_mutations_enabled=True)
     with pytest.raises(ProviderFeatureUnverified, match="disagree"):
@@ -533,3 +682,136 @@ def test_live_unlist_route_is_refused_while_writes_are_disabled(live, vast):
     r = client.post(f"/api/v1/provider/machines/{pm.id}/unlist", headers=h)
     assert r.status_code == 409 and r.json()["error"]["code"] == "provider_feature_disabled"
     assert vast.calls("DELETE") == []
+
+
+def _live_with_writes(vast):
+    settings = live_settings(
+        vast_base_url=vast.base_url,
+        vast_api_key=API_KEY,
+        vast_commercial_authorization_ref="TEST-ONLY-reference",
+        provider_mutations_enabled=True,
+    )
+    world = World(settings)
+    admin = world.user("admin")
+    registry.set_override(VastProvider(settings, sleep=lambda _: None))
+    return settings, world, admin
+
+
+def test_live_listing_controls_go_through_the_api_with_an_audit_trail(vast):
+    settings, world, admin = _live_with_writes(vast)
+    vast.reports[5001] = [{"problem": "gpu", "message": "xid 79", "created_at": "2026-10-19T00:00:00Z"}]
+    try:
+        with TestClient(create_app(settings), base_url="https://api.example.test") as client:
+            h = world.auth(admin)
+            client.post("/api/v1/provider/sync-machines", headers=h)
+            pm = world.session.execute(
+                select(ProviderMachine).where(ProviderMachine.external_id == "5001")
+            ).scalar_one()
+            base = f"/api/v1/provider/machines/{pm.id}"
+
+            # The synced snapshot already carries the offer fields the CLI prints.
+            one = client.get(base, headers=h).json()
+            assert one["listing"]["gpu_price"] == "0.4" and one["listing"]["verification"] == "verified"
+            assert one["listing"]["gpu_occupancy"] == "D D"
+
+            end = (datetime.now(UTC) + timedelta(days=14)).replace(microsecond=0)
+            r = client.post(
+                f"{base}/list",
+                headers=h,
+                json={
+                    "price_gpu": "0.38",
+                    "end_date": end.isoformat(),
+                    "price_min_bid": "0.15",
+                    "min_chunk": 1,
+                },
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["provider_result"] == "listing accepted by Vast"
+            assert r.json()["listed"] is None and "not verifiable" in r.json()["state_detail"]
+            sent = vast.listings[-1]
+            assert sent["machine"] == 5001 and sent["price_gpu"] == "0.38" and sent["price_min_bid"] == "0.15"
+            assert sent["end_date"] == int(end.timestamp())
+
+            # Guard rails the provider never sees.
+            for bad, needle in (
+                (
+                    {"price_gpu": "0.38", "end_date": (datetime.now(UTC) - timedelta(days=1)).isoformat()},
+                    "future",
+                ),
+                (
+                    {"price_gpu": "0.38", "end_date": end.isoformat(), "price_min_bid": "0.50"},
+                    "cannot exceed",
+                ),
+                ({"price_gpu": "0", "end_date": end.isoformat()}, "positive"),
+                (
+                    {"price_gpu": "0.38", "end_date": (datetime.now(UTC) + timedelta(days=400)).isoformat()},
+                    "365",
+                ),
+            ):
+                r = client.post(f"{base}/list", headers=h, json=bad)
+                assert r.status_code == 400 and needle in r.json()["error"]["message"], bad
+            r = client.post(
+                f"{base}/list", headers=h, json={"price_gpu": "0.38", "end_date": end.isoformat(), "x": 1}
+            )
+            assert r.status_code == 422
+            assert len(vast.listings) == 1
+
+            r = client.post(f"{base}/min-bid", headers=h, json={"price": "0.11"})
+            assert r.status_code == 200 and r.json()["provider_result"] == "minimum bid accepted by Vast"
+            r = client.post(f"{base}/cancel-maintenance", headers=h)
+            assert r.status_code == 200 and r.json()["provider_result"] == "maintenance window cancelled"
+            r = client.get(f"{base}/reports", headers=h)
+            assert (
+                r.status_code == 200
+                and r.json()["count"] == 1
+                and r.json()["items"][0]["message"] == "xid 79"
+            )
+
+            # An auditor reads, never writes; nobody else sees the routes.
+            auditor = world.auth(world.user("auditor"))
+            assert client.get(f"{base}/reports", headers=auditor).status_code == 200
+            assert client.post(f"{base}/min-bid", headers=auditor, json={"price": "0.11"}).status_code == 403
+            owner_user = world.auth(world.user("owner", world.owner()))
+            assert client.get(base, headers=owner_user).status_code == 403
+
+        actions = [
+            r.action
+            for r in world.session.execute(select(AuditLog).order_by(AuditLog.id)).scalars()
+            if r.action.startswith("provider_machine.")
+        ]
+        assert actions[-3:] == [
+            "provider_machine.list",
+            "provider_machine.min_bid",
+            "provider_machine.cancel_maintenance",
+        ]
+        listed = world.session.execute(
+            select(AuditLog).where(AuditLog.action == "provider_machine.list")
+        ).scalar_one()
+        assert listed.details["terms"]["price_gpu"] == "0.38" and listed.details["external_id"] == "5001"
+    finally:
+        registry.set_override(None)
+        world.close()
+
+
+def test_live_write_with_unknown_outcome_marks_the_machine_for_a_manual_check(vast):
+    settings, world, admin = _live_with_writes(vast)
+    try:
+        with TestClient(create_app(settings), base_url="https://api.example.test") as client:
+            h = world.auth(admin)
+            client.post("/api/v1/provider/sync-machines", headers=h)
+            pm = world.session.execute(
+                select(ProviderMachine).where(ProviderMachine.external_id == "5001")
+            ).scalar_one()
+            vast.fault("/api/v0/machines/5001/minbid/", 503)
+            r = client.post(f"/api/v1/provider/machines/{pm.id}/min-bid", headers=h, json={"price": "0.11"})
+            assert r.status_code == 400 and r.json()["error"]["code"] == "provider_outcome_uncertain"
+            world.session.expire_all()
+            pm = world.session.get(ProviderMachine, pm.id)
+            assert pm.listed is None and "outcome is unknown" in pm.state_detail
+        uncertain = world.session.execute(
+            select(AuditLog).where(AuditLog.action == "provider_machine.min_bid_uncertain")
+        ).scalar_one()
+        assert uncertain.details == {"external_id": "5001", "price": "0.11"}
+    finally:
+        registry.set_override(None)
+        world.close()
